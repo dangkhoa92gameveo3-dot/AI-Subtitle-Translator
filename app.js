@@ -12,11 +12,11 @@ const progressText = document.getElementById('progressText');
 const progressPercent = document.getElementById('progressPercent');
 const progressBar = document.getElementById('progressBar');
 const logConsole = document.getElementById('logConsole');
-const downloadSection = document.getElementById('downloadSection');
 const downloadLink = document.getElementById('downloadLink');
 const resetBtn = document.getElementById('resetBtn');
 const keyInputsContainer = document.getElementById('keyInputsContainer');
 const addKeyBtn = document.getElementById('addKeyBtn');
+const useOllamaBtn = document.getElementById('useOllamaBtn');
 
 // Variables
 let currentFile = null;
@@ -25,29 +25,67 @@ let isTranslating = false;
 let currentKeyIndex = 0;
 const CHUNK_SIZE = 50;
 
-// --- DYNAMIC API KEY MANAGEMENT ---
-function getAllApiKeys() {
-    const inputs = keyInputsContainer.querySelectorAll('.api-key-input');
+// --- DYNAMIC API KEY & STORAGE MANAGEMENT ---
+function saveSettings() {
     const keys = [];
-    inputs.forEach(input => { const val = input.value.trim(); if (val) keys.push(val); });
-    return keys;
+    keyInputsContainer.querySelectorAll('.api-key-input').forEach(input => {
+        const val = input.value.trim();
+        if (val) keys.push(val);
+    });
+    localStorage.setItem('gemini_api_keys', JSON.stringify(keys));
+    localStorage.setItem('use_ollama', useOllamaBtn.checked);
+}
+
+function loadSettings() {
+    // Load Ollama setting
+    const savedOllama = localStorage.getItem('use_ollama');
+    if (savedOllama !== null) {
+        useOllamaBtn.checked = savedOllama === 'true';
+    }
+    
+    // Load API Keys
+    const savedKeys = JSON.parse(localStorage.getItem('gemini_api_keys') || '[]');
+    keyInputsContainer.innerHTML = ''; // Clear default
+    
+    if (savedKeys.length === 0) {
+        addKeyRow(); // At least one empty row
+    } else {
+        savedKeys.forEach(key => addKeyRow(key));
+    }
+}
+
+function addKeyRow(value = '') {
+    const row = document.createElement('div');
+    row.className = 'key-row';
+    row.innerHTML = `<input type="password" class="api-key-input" value="${value}" placeholder="Nhập API Key mới..."><button class="remove-key-btn" title="Xóa key này">✕</button>`;
+    
+    row.querySelector('.api-key-input').addEventListener('input', saveSettings);
+    keyInputsContainer.appendChild(row);
+    return row;
 }
 
 addKeyBtn.addEventListener('click', () => {
-    const row = document.createElement('div');
-    row.className = 'key-row';
-    row.innerHTML = `<input type="password" class="api-key-input" placeholder="Nhập API Key mới..."><button class="remove-key-btn" title="Xóa key này">✕</button>`;
-    keyInputsContainer.appendChild(row);
+    const row = addKeyRow();
     row.querySelector('input').focus();
+    saveSettings();
 });
 
 keyInputsContainer.addEventListener('click', (e) => {
     if (e.target.classList.contains('remove-key-btn')) {
         const rows = keyInputsContainer.querySelectorAll('.key-row');
-        if (rows.length > 1) { e.target.closest('.key-row').remove(); }
-        else { alert('Phải giữ lại ít nhất 1 ô nhập Key.'); }
+        if (rows.length > 1) { 
+            e.target.closest('.key-row').remove(); 
+            saveSettings();
+        } else { 
+            alert('Phải giữ lại ít nhất 1 ô nhập Key.'); 
+        }
     }
 });
+
+useOllamaBtn.addEventListener('change', saveSettings);
+
+// Initialize settings on load
+loadSettings();
 
 // --- EVENT LISTENERS ---
 uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
@@ -115,6 +153,15 @@ const FREE_MODELS = ['openai', 'mistral', 'deepseek', 'qwen', 'llama'];
 let currentFreeModelIndex = 0;
 let usingFreeApi = false;
 let activeModelName = null;
+
+function getAllApiKeys() {
+    const keys = [];
+    keyInputsContainer.querySelectorAll('.api-key-input').forEach(input => {
+        const val = input.value.trim();
+        if (val) keys.push(val);
+    });
+    return keys;
+}
 
 function getActiveApiKey() {
     const keys = getAllApiKeys();
@@ -189,8 +236,52 @@ async function callFreeFallbackApi(promptText) {
     return text.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
 }
 
+// --- OLLAMA LOCAL API ---
+async function callOllamaApi(promptText) {
+    const payload = {
+        model: "gemma2:2b",
+        system: "Bạn là hệ thống dịch thuật phim Trung Quốc chuyên nghiệp. Dịch từng dòng tiếng Trung sang tiếng Việt. Giữ nguyên [số] đầu dòng. KHÔNG giải thích, KHÔNG thêm bớt dòng.",
+        prompt: promptText,
+        stream: false,
+        options: {
+            temperature: 0.1
+        }
+    };
+    
+    try {
+        const response = await fetch('http://localhost:11434/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}. Kiểm tra lại Ollama đã bật chưa?`);
+        }
+        
+        const data = await response.json();
+        return data.response.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
+    } catch (err) {
+        throw new Error(`Không kết nối được Ollama. Lỗi: ${err.message}`);
+    }
+}
+
 // --- MAIN API CALLER ---
 async function callTranslationApi(promptText, retries = 15) {
+    // === OLLAMA LOCAL API ===
+    if (useOllamaBtn.checked) {
+        try {
+            return await callOllamaApi(promptText);
+        } catch (error) {
+            if (retries > 0) {
+                log(`Lỗi Ollama: ${error.message} - Thử lại sau 2s...`, true);
+                await new Promise(r => setTimeout(r, 2000));
+                return callTranslationApi(promptText, retries - 1);
+            }
+            throw error;
+        }
+    }
+
     const key = getActiveApiKey();
 
     // === FREE API ===
@@ -301,7 +392,10 @@ Dịch các dòng sau:
 async function startTranslation() {
     if (parsedSubtitles.length === 0) return;
     const keys = getAllApiKeys();
-    if (keys.length === 0) { alert("Vui lòng nhập ít nhất 1 API Key!"); return; }
+    if (!useOllamaBtn.checked && keys.length === 0) { 
+        alert("Vui lòng nhập ít nhất 1 API Key hoặc chọn dùng AI nội bộ (Ollama)!"); 
+        return; 
+    }
 
     isTranslating = true;
     currentKeyIndex = 0;
@@ -379,8 +473,8 @@ async function startTranslation() {
         await processNextChunk();
     }
 
-    // Gemini: 3 luồng | Free API: 1 luồng
-    const concurrency = usingFreeApi ? 1 : 3;
+    // Gemini: 3 luồng | Ollama & Free API: 1 luồng
+    const concurrency = (useOllamaBtn.checked || usingFreeApi) ? 1 : 3;
     log(`Bắt đầu dịch (${chunks.length} phần, ${concurrency} luồng, ${keys.length} Key)...`);
     log(`[BẢO VỆ] Số thứ tự và Timecode được giữ nguyên 100% từ file gốc.`);
 
