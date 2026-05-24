@@ -146,12 +146,9 @@ function parseSrt(rawText) {
 }
 
 // ============================================================
-// HỆ THỐNG API ĐA NGUỒN
+// HỆ THỐNG API GEMINI (LUÂN PHIÊN KEY)
 // ============================================================
 
-const FREE_MODELS = ['openai', 'mistral', 'deepseek', 'qwen', 'llama'];
-let currentFreeModelIndex = 0;
-let usingFreeApi = false;
 let activeModelName = null;
 
 function getAllApiKeys() {
@@ -165,8 +162,11 @@ function getAllApiKeys() {
 
 function getActiveApiKey() {
     const keys = getAllApiKeys();
-    if (currentKeyIndex < keys.length) return keys[currentKeyIndex];
-    return "FREE_FALLBACK";
+    if (keys.length === 0) return null;
+    if (currentKeyIndex >= keys.length) {
+        currentKeyIndex = 0; // Quay vòng
+    }
+    return keys[currentKeyIndex];
 }
 
 function switchApiKey() {
@@ -174,134 +174,50 @@ function switchApiKey() {
     currentKeyIndex++;
     if (currentKeyIndex < keys.length) {
         activeModelName = null;
-        log(`[⚡ Đổi Key] Gemini Key ${currentKeyIndex + 1}/${keys.length}`);
-    } else if (currentKeyIndex === keys.length) {
-        usingFreeApi = true;
-        log(`[🔄 Chuyển] Gemini hết quota → Dùng AI miễn phí (${FREE_MODELS[currentFreeModelIndex]})`);
+        log(`[⚡ Đổi Key] Chuyển sang Gemini Key ${currentKeyIndex + 1}/${keys.length}`);
     } else {
         currentKeyIndex = 0;
         activeModelName = null;
-        log(`[🔄 Quay vòng] Thử lại Gemini Key 1`);
+        log(`[🔄 Hết vòng Key] Quay lại thử Gemini Key 1 (đợi 5s)`);
     }
 }
 
 async function getAvailableModel(apiKey) {
     if (activeModelName) return activeModelName;
     const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("API Key không hợp lệ.");
-    const data = await res.json();
-    const priorities = [
-        m => m.name.includes("gemini-2.0-flash"),
-        m => m.name.includes("gemini-2.5-flash"),
-        m => m.name.includes("gemini-1.5-flash"),
-        m => m.name.includes("gemini-1.0-pro") || m.name.endsWith("gemini-pro"),
-        m => m.name.includes("gemini"),
-    ];
-    for (const check of priorities) {
-        const target = data.models.find(m => check(m) && m.supportedGenerationMethods?.includes("generateContent"));
-        if (target) {
-            activeModelName = target.name.split('/').pop();
-            log(`[Model] ${activeModelName}`);
-            return activeModelName;
-        }
-    }
-    throw new Error("Không tìm thấy model Gemini nào.");
-}
-
-// --- FREE API ---
-async function callFreeFallbackApi(promptText) {
-    const model = FREE_MODELS[currentFreeModelIndex];
-    const payload = {
-        messages: [
-            { role: "system", content: "Bạn là hệ thống dịch thuật phim Trung Quốc chuyên nghiệp. Dịch từng dòng tiếng Trung sang tiếng Việt. Giữ nguyên [số] đầu dòng. KHÔNG giải thích, KHÔNG thêm bớt dòng." },
-            { role: "user", content: promptText }
-        ],
-        model: model,
-        seed: Math.floor(Math.random() * 100000)
-    };
-    const response = await fetch('https://text.pollinations.ai/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
-    if (!response.ok) {
-        if (response.status === 429) {
-            currentFreeModelIndex = (currentFreeModelIndex + 1) % FREE_MODELS.length;
-            throw new Error(`429 Rate limited → đổi sang ${FREE_MODELS[currentFreeModelIndex]}`);
-        }
-        throw new Error(`Free API HTTP ${response.status}`);
-    }
-    const text = await response.text();
-    return text.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
-}
-
-// --- OLLAMA LOCAL API ---
-async function callOllamaApi(promptText) {
-    const payload = {
-        model: "gemma2:2b",
-        system: "Bạn là hệ thống dịch thuật phim Trung Quốc chuyên nghiệp. Dịch từng dòng tiếng Trung sang tiếng Việt. Giữ nguyên [số] đầu dòng. KHÔNG giải thích, KHÔNG thêm bớt dòng.",
-        prompt: promptText,
-        stream: false,
-        options: {
-            temperature: 0.1
-        }
-    };
-    
     try {
-        const response = await fetch('http://localhost:11434/api/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("API Key không hợp lệ hoặc hết quota.");
+        const data = await res.json();
         
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}. Kiểm tra lại Ollama đã bật chưa?`);
+        // Ưu tiên các mô hình gemini miễn phí
+        const priorities = [
+            m => m.name.includes("gemini-2.0-flash"),
+            m => m.name.includes("gemini-2.5-flash"),
+            m => m.name.includes("gemini-1.5-flash") && !m.name.includes("8b"),
+            m => m.name.includes("gemini-1.5-flash-8b"),
+            m => m.name.includes("gemini-1.0-pro") || m.name.endsWith("gemini-pro"),
+            m => m.name.includes("gemini"),
+        ];
+        for (const check of priorities) {
+            const target = data.models.find(m => check(m) && m.supportedGenerationMethods?.includes("generateContent"));
+            if (target) {
+                activeModelName = target.name.split('/').pop();
+                log(`[Model] Đang dùng mô hình: ${activeModelName}`);
+                return activeModelName;
+            }
         }
-        
-        const data = await response.json();
-        return data.response.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
-    } catch (err) {
-        throw new Error(`Không kết nối được Ollama. Lỗi: ${err.message}`);
+        throw new Error("Không tìm thấy model Gemini nào khả dụng.");
+    } catch (e) {
+        throw new Error("Lỗi kết nối Gemini API: " + e.message);
     }
 }
 
 // --- MAIN API CALLER ---
 async function callTranslationApi(promptText, retries = 15) {
-    // === OLLAMA LOCAL API ===
-    if (useOllamaBtn.checked) {
-        try {
-            return await callOllamaApi(promptText);
-        } catch (error) {
-            if (retries > 0) {
-                log(`Lỗi Ollama: ${error.message} - Thử lại sau 2s...`, true);
-                await new Promise(r => setTimeout(r, 2000));
-                return callTranslationApi(promptText, retries - 1);
-            }
-            throw error;
-        }
-    }
-
     const key = getActiveApiKey();
+    if (!key) throw new Error("Không có API Key nào được nhập!");
 
-    // === FREE API ===
-    if (key === "FREE_FALLBACK") {
-        try {
-            return await callFreeFallbackApi(promptText);
-        } catch (error) {
-            if (retries > 0) {
-                const is429 = error.message.includes('429');
-                const waitTime = is429 ? 8000 : 2000;
-                log(`Lỗi Free API: ${error.message}`, true);
-                log(`=> Chờ ${waitTime/1000}s rồi thử lại...`);
-                await new Promise(r => setTimeout(r, waitTime));
-                return callTranslationApi(promptText, retries - 1);
-            }
-            throw error;
-        }
-    }
-
-    // === GEMINI ===
     try {
         const modelName = await getAvailableModel(key);
         const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
@@ -320,13 +236,16 @@ async function callTranslationApi(promptText, retries = 15) {
         }
         const data = await response.json();
         let translatedText = data.candidates[0].content.parts[0].text;
-        return translatedText.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
+        return translatedText.replace(/^```[a-z]*\n/i, '').replace(/\nflug$/i, '').replace(/\n```$/i, '').trim();
     } catch (error) {
         if (retries > 0) {
             log(`Lỗi Gemini: ${error.message.substring(0, 100)}`, true);
-            await new Promise(r => setTimeout(r, 1000));
             switchApiKey();
-            activeModelName = null;
+            if (currentKeyIndex === 0) {
+                await new Promise(r => setTimeout(r, 5000));
+            } else {
+                await new Promise(r => setTimeout(r, 1000));
+            }
             return callTranslationApi(promptText, retries - 1);
         }
         throw error;
@@ -392,16 +311,14 @@ Dịch các dòng sau:
 async function startTranslation() {
     if (parsedSubtitles.length === 0) return;
     const keys = getAllApiKeys();
-    if (!useOllamaBtn.checked && keys.length === 0) { 
-        alert("Vui lòng nhập ít nhất 1 API Key hoặc chọn dùng AI nội bộ (Ollama)!"); 
+    if (keys.length === 0) { 
+        alert("Vui lòng nhập ít nhất 1 API Key!"); 
         return; 
     }
 
     isTranslating = true;
     currentKeyIndex = 0;
     activeModelName = null;
-    usingFreeApi = false;
-    currentFreeModelIndex = 0;
     startBtn.disabled = true;
     btnText.textContent = "Đang dịch...";
     btnSpinner.classList.remove('hidden');
@@ -454,9 +371,6 @@ async function startTranslation() {
                 progressPercent.textContent = `${percent}%`;
                 progressBar.style.width = `${percent}%`;
 
-                // Nếu đang dùng Free API: chờ giữa mỗi request để tránh 429
-                if (usingFreeApi) await new Promise(r => setTimeout(r, 4000));
-
             } catch (error) {
                 attempts++;
                 log(`Lỗi phần ${startIdx+1}-${endIdx}: ${error.message}`, true);
@@ -465,16 +379,15 @@ async function startTranslation() {
                     hasFatalError = true;
                     return;
                 }
-                // Nếu bị 429 thì chờ 8s, lỗi khác chờ 2s
-                const is429 = error.message.includes('429');
-                await new Promise(r => setTimeout(r, is429 ? 8000 : 2000));
+                // Chỉ còn Gemini, nên chờ 2s rồi thử lại
+                await new Promise(r => setTimeout(r, 2000));
             }
         }
         await processNextChunk();
     }
 
-    // Gemini: 3 luồng | Ollama & Free API: 1 luồng
-    const concurrency = (useOllamaBtn.checked || usingFreeApi) ? 1 : 3;
+    // Gemini: 3 luồng
+    const concurrency = 3;
     log(`Bắt đầu dịch (${chunks.length} phần, ${concurrency} luồng, ${keys.length} Key)...`);
     log(`[BẢO VỆ] Số thứ tự và Timecode được giữ nguyên 100% từ file gốc.`);
 
