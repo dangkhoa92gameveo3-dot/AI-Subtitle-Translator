@@ -20,11 +20,10 @@ const addKeyBtn = document.getElementById('addKeyBtn');
 
 // Variables
 let currentFile = null;
-let srtBlocks = [];
-let translatedBlocks = [];
+let parsedSubtitles = []; // Mảng chứa {index, timecode, text} - TÁCH RIÊNG
 let isTranslating = false;
 let currentKeyIndex = 0;
-const CHUNK_SIZE = 60;
+const CHUNK_SIZE = 50; // Số subtitle gửi mỗi lần
 
 // --- DYNAMIC API KEY MANAGEMENT ---
 
@@ -116,21 +115,47 @@ function handleFile(file) {
     reader.onload = (e) => {
         const text = e.target.result;
         parseSrt(text);
-        fileStatsDisplay.textContent = `Tổng số dòng phụ đề: ${srtBlocks.length}`;
+        fileStatsDisplay.textContent = `Tổng số dòng phụ đề: ${parsedSubtitles.length}`;
         controlsSection.classList.remove('hidden');
         uploadArea.classList.add('hidden');
-        log(`Đã tải file thành công: ${srtBlocks.length} block phụ đề.`);
+        log(`Đã tải file thành công: ${parsedSubtitles.length} dòng phụ đề.`);
     };
     reader.readAsText(file);
 }
 
-function parseSrt(text) {
-    text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    const rawBlocks = text.split(/\n\s*\n/);
-    srtBlocks = [];
+/**
+ * PHÂN TÁCH FILE SRT THÀNH CÁC THÀNH PHẦN RIÊNG BIỆT
+ * Mỗi subtitle được lưu thành: { header: "1\n00:00:00,333 --> 00:00:01,566", text: "不行了" }
+ * Phần header (số + timecode) sẽ KHÔNG BAO GIỜ bị gửi cho AI.
+ */
+function parseSrt(rawText) {
+    rawText = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const rawBlocks = rawText.split(/\n\s*\n/);
+    parsedSubtitles = [];
+    
     rawBlocks.forEach(block => {
-        if (block.trim() === '') return;
-        srtBlocks.push(block.trim());
+        block = block.trim();
+        if (!block) return;
+        
+        const lines = block.split('\n');
+        if (lines.length < 2) return;
+        
+        // Dòng 1: Số thứ tự
+        // Dòng 2: Timecode (chứa -->)
+        // Dòng 3+: Nội dung text
+        const indexLine = lines[0].trim();
+        const timecodeLine = lines[1].trim();
+        
+        // Kiểm tra dòng timecode hợp lệ
+        if (!timecodeLine.includes('-->')) return;
+        
+        const textLines = lines.slice(2).join('\n').trim();
+        
+        parsedSubtitles.push({
+            header: indexLine + '\n' + timecodeLine, // GIỮ NGUYÊN 100%
+            text: textLines,                         // CHỈ PHẦN NÀY ĐƯỢC DỊCH
+            translatedText: ''                       // Sẽ được điền sau
+        });
     });
 }
 
@@ -153,7 +178,6 @@ function switchApiKey() {
     } else if (currentKeyIndex === keys.length) {
         log(`[Hệ thống] Tất cả ${keys.length} Key Gemini đều bị lỗi. TỰ ĐỘNG CHUYỂN SANG AI MIỄN PHÍ DỰ PHÒNG!`);
     } else {
-        // Quay vòng lại đầu
         currentKeyIndex = 0;
         log(`[Hệ thống] Đã quay vòng lại API Key 1.`);
     }
@@ -195,7 +219,7 @@ async function callFreeFallbackApi(promptText) {
     const url = `https://text.pollinations.ai/`;
     const payload = {
         messages: [
-            { role: "system", content: "Bạn là hệ thống dịch thuật tự động. CHỈ XUẤT RA ĐỊNH DẠNG SRT, TUYỆT ĐỐI KHÔNG GIẢI THÍCH HAY BÌNH LUẬN." },
+            { role: "system", content: "Bạn là hệ thống dịch thuật tự động. Dịch từng dòng tiếng Trung sang tiếng Việt. Mỗi dòng input tương ứng 1 dòng output. KHÔNG giải thích, KHÔNG thêm bớt dòng." },
             { role: "user", content: promptText }
         ],
         model: "openai"
@@ -215,7 +239,6 @@ async function callFreeFallbackApi(promptText) {
 async function callTranslationApi(promptText, retries = 10) {
     const key = getActiveApiKey();
     
-    // Nếu đã hết tất cả Gemini Key -> dùng API miễn phí
     if (key === "FREE_FALLBACK") {
         try {
             return await callFreeFallbackApi(promptText);
@@ -283,27 +306,24 @@ async function callTranslationApi(promptText, retries = 10) {
     }
 }
 
-// --- SYSTEM PROMPT ---
+// --- SYSTEM PROMPT (CHỈ DỊCH TEXT THUẦN, KHÔNG CÓ SỐ/TIMECODE) ---
 
 function getSystemPrompt() {
-    return `Bạn là một CÔNG CỤ DỊCH THUẬT MÁY TÍNH TỰ ĐỘNG.
-Nhiệm vụ: Dịch văn bản tiếng Trung sang tiếng Việt.
+    return `Bạn là CÔNG CỤ DỊCH THUẬT TỰ ĐỘNG. Dịch tiếng Trung sang tiếng Việt.
 
-CẢNH BÁO ĐỎ - BẮT BUỘC TUÂN THỦ:
-1. ĐẦU RA (OUTPUT) CỦA BẠN PHẢI LÀ ĐỊNH DẠNG SRT CHUẨN 100%.
-2. TUYỆT ĐỐI KHÔNG giải thích, KHÔNG suy luận, KHÔNG phân tích, KHÔNG đưa ra các câu như "Translate:", "Actually meaning".
-3. CHỈ VÀ CHỈ xuất ra các khối SRT gồm: Số thứ tự -> Timecode -> Text đã dịch. KHÔNG ĐƯỢC THIẾU KHỐI NÀO.
-4. NẾU CÓ BẤT KỲ KÝ TỰ NÀO NGOÀI ĐỊNH DẠNG SRT, HỆ THỐNG SẼ BỊ CRASH VÀ BẠN SẼ BỊ PHẠT.
+BẮT BUỘC:
+- Input gồm nhiều dòng, mỗi dòng bắt đầu bằng [số]. Ví dụ: [1] 不行了
+- Output phải giữ nguyên [số] và chỉ thay phần text bằng bản dịch tiếng Việt.
+- KHÔNG giải thích. KHÔNG thêm dòng. KHÔNG bớt dòng. KHÔNG thay đổi số trong [].
+- Số dòng output PHẢI BẰNG ĐÚNG số dòng input.
 
 Ví dụ Input:
-1
-00:00:00,333 --> 00:00:01,566
-不行了
+[1] 不行了
+[2] 那个地方已经动弹不得了，别想了
 
-Ví dụ Output Cần Trả Về (Tuyệt đối không giải thích):
-1
-00:00:00,333 --> 00:00:01,566
-Không được rồi
+Ví dụ Output:
+[1] Không được rồi
+[2] Chỗ đó không động đậy được nữa rồi, đừng hòng tới nữa
 
 QUY TẮC TÊN NHÂN VẬT & DANH TỪ:
 - 慕容婉歌 / 慕容婉言 / 慕容宛哥 / 慕容碗哥 / 慕容晚年 / 墨晚哥 -> Mộ Dung Uyển Ca
@@ -321,18 +341,18 @@ QUY TẮC TÊN NHÂN VẬT & DANH TỪ:
 - 本座 -> bản tọa
 - 纷纷 / 芬芬 -> Phân Phân
 
-Nội dung cần dịch (TUYỆT ĐỐI CHỈ TRẢ VỀ CÁC KHỐI SRT NÀY):
+Dịch các dòng sau:
 `;
 }
 
-// --- MAIN TRANSLATION ---
+// --- MAIN TRANSLATION (CHỈ GỬI TEXT, GIỮ NGUYÊN SỐ/TIMECODE) ---
 
 async function startTranslation() {
-    if (srtBlocks.length === 0) return;
+    if (parsedSubtitles.length === 0) return;
     
     const keys = getAllApiKeys();
     if (keys.length === 0) {
-        alert("Vui lòng nhập ít nhất 1 API Key hoặc để trống để dùng API miễn phí!");
+        alert("Vui lòng nhập ít nhất 1 API Key!");
         return;
     }
 
@@ -345,34 +365,55 @@ async function startTranslation() {
     progressSection.classList.remove('hidden');
     logConsole.innerHTML = '';
     
-    translatedBlocks = [];
-    
+    // Chia subtitles thành các chunk
     const chunks = [];
-    for (let i = 0; i < srtBlocks.length; i += CHUNK_SIZE) {
-        chunks.push(srtBlocks.slice(i, i + CHUNK_SIZE));
+    for (let i = 0; i < parsedSubtitles.length; i += CHUNK_SIZE) {
+        chunks.push({
+            startIdx: i,
+            endIdx: Math.min(i + CHUNK_SIZE, parsedSubtitles.length)
+        });
     }
     
     const CONCURRENCY_LIMIT = 3;
-    let currentIndex = 0;
+    let currentChunkIdx = 0;
     let completedChunks = 0;
-    const results = new Array(chunks.length);
     let hasFatalError = false;
 
     async function processNextChunk() {
-        if (currentIndex >= chunks.length || hasFatalError) return;
+        if (currentChunkIdx >= chunks.length || hasFatalError) return;
         
-        const chunkIndex = currentIndex++;
-        const chunkText = chunks[chunkIndex].join('\n\n');
-        const promptText = getSystemPrompt() + "\n" + chunkText;
+        const chunkInfo = chunks[currentChunkIdx++];
+        const { startIdx, endIdx } = chunkInfo;
         let attempts = 0;
         let success = false;
         
+        // Tạo prompt CHỈ CHỨA TEXT (có đánh số để map lại)
+        let textLines = '';
+        for (let i = startIdx; i < endIdx; i++) {
+            textLines += `[${i}] ${parsedSubtitles[i].text}\n`;
+        }
+        
+        const promptText = getSystemPrompt() + textLines;
+        
         while (!success && attempts < 3 && !hasFatalError) {
             try {
-                log(`Đang xử lý block ${chunkIndex * CHUNK_SIZE + 1} đến ${Math.min((chunkIndex + 1) * CHUNK_SIZE, srtBlocks.length)}...`);
+                log(`Đang dịch dòng ${startIdx + 1} đến ${endIdx}...`);
                 
                 const result = await callTranslationApi(promptText);
-                results[chunkIndex] = result;
+                
+                // Parse kết quả: tìm các dòng [số] text
+                const translatedLines = result.split('\n');
+                for (const line of translatedLines) {
+                    const match = line.match(/^\[(\d+)\]\s*(.+)/);
+                    if (match) {
+                        const idx = parseInt(match[1]);
+                        const translated = match[2].trim();
+                        if (idx >= 0 && idx < parsedSubtitles.length) {
+                            parsedSubtitles[idx].translatedText = translated;
+                        }
+                    }
+                }
+                
                 success = true;
                 completedChunks++;
                 
@@ -383,9 +424,9 @@ async function startTranslation() {
                 
             } catch (error) {
                 attempts++;
-                log(`Lỗi khi dịch phần ${chunkIndex+1}: ${error.message}`, true);
+                log(`Lỗi khi dịch phần ${startIdx+1}-${endIdx}: ${error.message}`, true);
                 if (attempts >= 3) {
-                    log(`Đã thử 3 lần phần ${chunkIndex+1} nhưng thất bại. Tiến trình bị dừng.`, true);
+                    log(`Đã thử 3 lần nhưng thất bại. Tiến trình bị dừng.`, true);
                     hasFatalError = true;
                     return;
                 }
@@ -396,7 +437,8 @@ async function startTranslation() {
         await processNextChunk();
     }
 
-    log(`Bắt đầu dịch siêu tốc (${chunks.length} phần, ${CONCURRENCY_LIMIT} luồng song song, ${keys.length} API Key)...`);
+    log(`Bắt đầu dịch (${chunks.length} phần, ${CONCURRENCY_LIMIT} luồng, ${keys.length} Key)...`);
+    log(`[BẢO VỆ] Số thứ tự và Timecode được giữ nguyên 100% từ file gốc.`);
     
     const workers = [];
     for (let i = 0; i < CONCURRENCY_LIMIT; i++) {
@@ -408,7 +450,6 @@ async function startTranslation() {
     if (hasFatalError) {
         finishTranslation(false);
     } else {
-        translatedBlocks = results;
         finishTranslation(true);
     }
 }
@@ -428,9 +469,22 @@ function finishTranslation(isSuccess) {
     }
 }
 
+/**
+ * TẠO FILE SRT HOÀN CHỈNH
+ * Ghép: header GỐC (số + timecode) + text ĐÃ DỊCH
+ * => Đảm bảo tuyệt đối số và timecode KHÔNG BAO GIỜ bị thay đổi
+ */
 function createDownload() {
-    const finalSrtText = translatedBlocks.join('\n\n');
-    const blob = new Blob([finalSrtText], { type: 'text/plain' });
+    let srtOutput = '';
+    
+    for (let i = 0; i < parsedSubtitles.length; i++) {
+        const sub = parsedSubtitles[i];
+        const finalText = sub.translatedText || sub.text; // Nếu chưa dịch được thì giữ text gốc
+        
+        srtOutput += sub.header + '\n' + finalText + '\n\n';
+    }
+    
+    const blob = new Blob([srtOutput.trim()], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     
     const originalName = currentFile.name;
@@ -443,8 +497,7 @@ function createDownload() {
 
 function resetApp() {
     currentFile = null;
-    srtBlocks = [];
-    translatedBlocks = [];
+    parsedSubtitles = [];
     fileInput.value = '';
     currentKeyIndex = 0;
     activeModelName = null;
