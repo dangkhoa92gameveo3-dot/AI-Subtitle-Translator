@@ -16,6 +16,8 @@ const downloadLink = document.getElementById('downloadLink');
 const resetBtn = document.getElementById('resetBtn');
 const keyInputsContainer = document.getElementById('keyInputsContainer');
 const addKeyBtn = document.getElementById('addKeyBtn');
+const useOllamaBtn = document.getElementById('useOllamaBtn');
+const ollamaModelInput = document.getElementById('ollamaModelInput');
 
 // Variables
 let currentFile = null;
@@ -32,9 +34,17 @@ function saveSettings() {
         if (val) keys.push(val);
     });
     localStorage.setItem('gemini_api_keys', JSON.stringify(keys));
+    localStorage.setItem('use_ollama', useOllamaBtn.checked);
+    localStorage.setItem('ollama_model', ollamaModelInput.value.trim());
 }
 
 function loadSettings() {
+    // Load Ollama settings
+    const savedOllama = localStorage.getItem('use_ollama');
+    if (savedOllama !== null) useOllamaBtn.checked = savedOllama === 'true';
+    const savedModel = localStorage.getItem('ollama_model');
+    if (savedModel !== null) ollamaModelInput.value = savedModel;
+    
     // Load API Keys
     const savedKeys = JSON.parse(localStorage.getItem('gemini_api_keys') || '[]');
     keyInputsContainer.innerHTML = ''; // Clear default
@@ -73,6 +83,9 @@ keyInputsContainer.addEventListener('click', (e) => {
         }
     }
 });
+
+useOllamaBtn.addEventListener('change', saveSettings);
+ollamaModelInput.addEventListener('input', saveSettings);
 
 // Initialize settings on load
 loadSettings();
@@ -211,8 +224,52 @@ async function getAvailableModels(apiKey) {
     }
 }
 
+// --- OLLAMA LOCAL API ---
+async function callOllamaApi(promptText) {
+    const modelName = ollamaModelInput.value.trim() || "qwen3.5:4b";
+    const payload = {
+        model: modelName,
+        system: "Bạn là hệ thống dịch thuật phim Trung Quốc chuyên nghiệp. Dịch từng dòng tiếng Trung sang tiếng Việt. Giữ nguyên [số] đầu dòng. KHÔNG giải thích, KHÔNG thêm bớt dòng.",
+        prompt: promptText,
+        stream: false,
+        options: {
+            temperature: 0.1
+        }
+    };
+    
+    try {
+        const response = await fetch('http://localhost:11434/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}. Kiểm tra lại Ollama đã bật chưa và có tải model '${modelName}' chưa?`);
+        }
+        
+        const data = await response.json();
+        return data.response.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
+    } catch (err) {
+        throw new Error(`Không kết nối được Ollama. Lỗi: ${err.message}`);
+    }
+}
+
 // --- MAIN API CALLER ---
 async function callTranslationApi(promptText, retries = 15) {
+    if (useOllamaBtn.checked) {
+        try {
+            return await callOllamaApi(promptText);
+        } catch (error) {
+            if (retries > 0) {
+                log(`Lỗi Ollama: ${error.message} - Thử lại sau 2s...`, true);
+                await new Promise(r => setTimeout(r, 2000));
+                return callTranslationApi(promptText, retries - 1);
+            }
+            throw error;
+        }
+    }
+
     const key = getActiveApiKey();
     if (!key) throw new Error("Không có API Key nào được nhập!");
 
@@ -328,8 +385,8 @@ Dịch các dòng sau:
 async function startTranslation() {
     if (parsedSubtitles.length === 0) return;
     const keys = getAllApiKeys();
-    if (keys.length === 0) { 
-        alert("Vui lòng nhập ít nhất 1 API Key!"); 
+    if (!useOllamaBtn.checked && keys.length === 0) { 
+        alert("Vui lòng nhập ít nhất 1 API Key hoặc bật Dùng AI Nội Bộ (Ollama)!"); 
         return; 
     }
 
@@ -403,8 +460,8 @@ async function startTranslation() {
         await processNextChunk();
     }
 
-    // Gemini: 3 luồng
-    const concurrency = 3;
+    // Gemini: 3 luồng | Ollama: 1 luồng
+    const concurrency = useOllamaBtn.checked ? 1 : 3;
     log(`Bắt đầu dịch (${chunks.length} phần, ${concurrency} luồng, ${keys.length} Key)...`);
     log(`[BẢO VỆ] Số thứ tự và Timecode được giữ nguyên 100% từ file gốc.`);
 
