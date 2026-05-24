@@ -20,30 +20,23 @@ const addKeyBtn = document.getElementById('addKeyBtn');
 
 // Variables
 let currentFile = null;
-let parsedSubtitles = []; // Mảng chứa {index, timecode, text} - TÁCH RIÊNG
+let parsedSubtitles = [];
 let isTranslating = false;
 let currentKeyIndex = 0;
-const CHUNK_SIZE = 50; // Số subtitle gửi mỗi lần
+const CHUNK_SIZE = 50;
 
 // --- DYNAMIC API KEY MANAGEMENT ---
-
 function getAllApiKeys() {
     const inputs = keyInputsContainer.querySelectorAll('.api-key-input');
     const keys = [];
-    inputs.forEach(input => {
-        const val = input.value.trim();
-        if (val) keys.push(val);
-    });
+    inputs.forEach(input => { const val = input.value.trim(); if (val) keys.push(val); });
     return keys;
 }
 
 addKeyBtn.addEventListener('click', () => {
     const row = document.createElement('div');
     row.className = 'key-row';
-    row.innerHTML = `
-        <input type="password" class="api-key-input" placeholder="Nhập API Key mới...">
-        <button class="remove-key-btn" title="Xóa key này">✕</button>
-    `;
+    row.innerHTML = `<input type="password" class="api-key-input" placeholder="Nhập API Key mới..."><button class="remove-key-btn" title="Xóa key này">✕</button>`;
     keyInputsContainer.appendChild(row);
     row.querySelector('input').focus();
 });
@@ -51,48 +44,24 @@ addKeyBtn.addEventListener('click', () => {
 keyInputsContainer.addEventListener('click', (e) => {
     if (e.target.classList.contains('remove-key-btn')) {
         const rows = keyInputsContainer.querySelectorAll('.key-row');
-        if (rows.length > 1) {
-            e.target.closest('.key-row').remove();
-        } else {
-            alert('Phải giữ lại ít nhất 1 ô nhập Key.');
-        }
+        if (rows.length > 1) { e.target.closest('.key-row').remove(); }
+        else { alert('Phải giữ lại ít nhất 1 ô nhập Key.'); }
     }
 });
 
 // --- EVENT LISTENERS ---
-
-uploadArea.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    uploadArea.classList.add('dragover');
-});
-
-uploadArea.addEventListener('dragleave', () => {
-    uploadArea.classList.remove('dragover');
-});
-
+uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', () => { uploadArea.classList.remove('dragover'); });
 uploadArea.addEventListener('drop', (e) => {
-    e.preventDefault();
-    uploadArea.classList.remove('dragover');
-    if (e.dataTransfer.files.length > 0) {
-        handleFile(e.dataTransfer.files[0]);
-    }
+    e.preventDefault(); uploadArea.classList.remove('dragover');
+    if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
 });
-
-uploadArea.addEventListener('click', () => {
-    fileInput.click();
-});
-
-fileInput.addEventListener('change', (e) => {
-    if (e.target.files.length > 0) {
-        handleFile(e.target.files[0]);
-    }
-});
-
+uploadArea.addEventListener('click', () => { fileInput.click(); });
+fileInput.addEventListener('change', (e) => { if (e.target.files.length > 0) handleFile(e.target.files[0]); });
 startBtn.addEventListener('click', startTranslation);
 resetBtn.addEventListener('click', resetApp);
 
 // --- CORE FUNCTIONS ---
-
 function log(msg, isError = false) {
     const p = document.createElement('div');
     p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -102,19 +71,13 @@ function log(msg, isError = false) {
 }
 
 function handleFile(file) {
-    if (!file.name.toLowerCase().endsWith('.srt')) {
-        alert('Vui lòng chọn file có định dạng .srt');
-        return;
-    }
-    
+    if (!file.name.toLowerCase().endsWith('.srt')) { alert('Vui lòng chọn file có định dạng .srt'); return; }
     currentFile = file;
     fileNameDisplay.textContent = `Tên file: ${file.name}`;
     fileStatsDisplay.textContent = `Đang phân tích...`;
-    
     const reader = new FileReader();
     reader.onload = (e) => {
-        const text = e.target.result;
-        parseSrt(text);
+        parseSrt(e.target.result);
         fileStatsDisplay.textContent = `Tổng số dòng phụ đề: ${parsedSubtitles.length}`;
         controlsSection.classList.remove('hidden');
         uploadArea.classList.add('hidden');
@@ -123,96 +86,64 @@ function handleFile(file) {
     reader.readAsText(file);
 }
 
-/**
- * PHÂN TÁCH FILE SRT THÀNH CÁC THÀNH PHẦN RIÊNG BIỆT
- * Mỗi subtitle được lưu thành: { header: "1\n00:00:00,333 --> 00:00:01,566", text: "不行了" }
- * Phần header (số + timecode) sẽ KHÔNG BAO GIỜ bị gửi cho AI.
- */
 function parseSrt(rawText) {
     rawText = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const rawBlocks = rawText.split(/\n\s*\n/);
     parsedSubtitles = [];
-    
     rawBlocks.forEach(block => {
         block = block.trim();
         if (!block) return;
-        
         const lines = block.split('\n');
         if (lines.length < 2) return;
-        
-        // Dòng 1: Số thứ tự
-        // Dòng 2: Timecode (chứa -->)
-        // Dòng 3+: Nội dung text
         const indexLine = lines[0].trim();
         const timecodeLine = lines[1].trim();
-        
-        // Kiểm tra dòng timecode hợp lệ
         if (!timecodeLine.includes('-->')) return;
-        
-        const textLines = lines.slice(2).join('\n').trim();
-        
+        const textContent = lines.slice(2).join('\n').trim();
         parsedSubtitles.push({
-            header: indexLine + '\n' + timecodeLine, // GIỮ NGUYÊN 100%
-            text: textLines,                         // CHỈ PHẦN NÀY ĐƯỢC DỊCH
-            translatedText: ''                       // Sẽ được điền sau
+            header: indexLine + '\n' + timecodeLine,
+            text: textContent,
+            translatedText: ''
         });
     });
 }
 
-// --- API ROTATION LOGIC (ĐA NGUỒN) ---
+// ============================================================
+// HỆ THỐNG API ĐA NGUỒN
+// ============================================================
 
-// Danh sách các nguồn API miễn phí (KHÔNG cần Key)
-const FREE_PROVIDERS = [
-    { name: 'Pollinations (GPT-4o-mini)', model: 'openai', url: 'https://text.pollinations.ai/' },
-    { name: 'Pollinations (Mistral)', model: 'mistral', url: 'https://text.pollinations.ai/' },
-    { name: 'Pollinations (Llama)', model: 'llama', url: 'https://text.pollinations.ai/' },
-    { name: 'Pollinations (DeepSeek)', model: 'deepseek', url: 'https://text.pollinations.ai/' },
-    { name: 'Pollinations (Qwen)', model: 'qwen', url: 'https://text.pollinations.ai/' },
-];
-let currentFreeProviderIndex = 0;
+const FREE_MODELS = ['openai', 'mistral', 'deepseek', 'qwen', 'llama'];
+let currentFreeModelIndex = 0;
+let usingFreeApi = false;
+let activeModelName = null;
 
 function getActiveApiKey() {
     const keys = getAllApiKeys();
-    if (currentKeyIndex < keys.length) {
-        return keys[currentKeyIndex];
-    }
+    if (currentKeyIndex < keys.length) return keys[currentKeyIndex];
     return "FREE_FALLBACK";
 }
 
 function switchApiKey() {
     const keys = getAllApiKeys();
     currentKeyIndex++;
-    
     if (currentKeyIndex < keys.length) {
+        activeModelName = null;
         log(`[⚡ Đổi Key] Gemini Key ${currentKeyIndex + 1}/${keys.length}`);
     } else if (currentKeyIndex === keys.length) {
-        log(`[🔄 Chuyển] Gemini hết quota → Dùng AI miễn phí: ${FREE_PROVIDERS[currentFreeProviderIndex].name}`);
+        usingFreeApi = true;
+        log(`[🔄 Chuyển] Gemini hết quota → Dùng AI miễn phí (${FREE_MODELS[currentFreeModelIndex]})`);
     } else {
-        // Quay vòng: thử lại Gemini key đầu tiên
         currentKeyIndex = 0;
         activeModelName = null;
         log(`[🔄 Quay vòng] Thử lại Gemini Key 1`);
     }
 }
 
-function switchFreeProvider() {
-    currentFreeProviderIndex = (currentFreeProviderIndex + 1) % FREE_PROVIDERS.length;
-    log(`[🔄 Đổi AI miễn phí] → ${FREE_PROVIDERS[currentFreeProviderIndex].name}`);
-}
-
-let activeModelName = null;
-
 async function getAvailableModel(apiKey) {
     if (activeModelName) return activeModelName;
-    
     const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
     const res = await fetch(url);
-    if (!res.ok) {
-        throw new Error("API Key không hợp lệ.");
-    }
+    if (!res.ok) throw new Error("API Key không hợp lệ.");
     const data = await res.json();
-    
-    // Ưu tiên: gemini-2.0-flash > gemini-1.5-flash > gemini-pro > bất kỳ gemini nào
     const priorities = [
         m => m.name.includes("gemini-2.0-flash"),
         m => m.name.includes("gemini-2.5-flash"),
@@ -220,7 +151,6 @@ async function getAvailableModel(apiKey) {
         m => m.name.includes("gemini-1.0-pro") || m.name.endsWith("gemini-pro"),
         m => m.name.includes("gemini"),
     ];
-    
     for (const check of priorities) {
         const target = data.models.find(m => check(m) && m.supportedGenerationMethods?.includes("generateContent"));
         if (target) {
@@ -229,113 +159,92 @@ async function getAvailableModel(apiKey) {
             return activeModelName;
         }
     }
-    
     throw new Error("Không tìm thấy model Gemini nào.");
 }
 
-// --- API CALLERS ---
-
+// --- FREE API ---
 async function callFreeFallbackApi(promptText) {
-    const provider = FREE_PROVIDERS[currentFreeProviderIndex];
-    
+    const model = FREE_MODELS[currentFreeModelIndex];
     const payload = {
         messages: [
             { role: "system", content: "Bạn là hệ thống dịch thuật phim Trung Quốc chuyên nghiệp. Dịch từng dòng tiếng Trung sang tiếng Việt. Giữ nguyên [số] đầu dòng. KHÔNG giải thích, KHÔNG thêm bớt dòng." },
             { role: "user", content: promptText }
         ],
-        model: provider.model
+        model: model,
+        seed: Math.floor(Math.random() * 100000)
     };
-    
-    const response = await fetch(provider.url, {
+    const response = await fetch('https://text.pollinations.ai/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     });
-
-    if (!response.ok) throw new Error(`${provider.name}: HTTP ${response.status}`);
+    if (!response.ok) {
+        if (response.status === 429) {
+            currentFreeModelIndex = (currentFreeModelIndex + 1) % FREE_MODELS.length;
+            throw new Error(`429 Rate limited → đổi sang ${FREE_MODELS[currentFreeModelIndex]}`);
+        }
+        throw new Error(`Free API HTTP ${response.status}`);
+    }
     const text = await response.text();
     return text.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
 }
 
+// --- MAIN API CALLER ---
 async function callTranslationApi(promptText, retries = 15) {
     const key = getActiveApiKey();
-    
-    // === LUỒNG API MIỄN PHÍ ===
+
+    // === FREE API ===
     if (key === "FREE_FALLBACK") {
         try {
             return await callFreeFallbackApi(promptText);
         } catch (error) {
             if (retries > 0) {
-                log(`Lỗi ${FREE_PROVIDERS[currentFreeProviderIndex].name}: ${error.message.substring(0, 80)}`, true);
-                switchFreeProvider(); // Đổi sang AI miễn phí khác ngay lập tức
-                await new Promise(r => setTimeout(r, 1000)); // Chờ 1 giây thôi
+                const is429 = error.message.includes('429');
+                const waitTime = is429 ? 8000 : 2000;
+                log(`Lỗi Free API: ${error.message}`, true);
+                log(`=> Chờ ${waitTime/1000}s rồi thử lại...`);
+                await new Promise(r => setTimeout(r, waitTime));
                 return callTranslationApi(promptText, retries - 1);
             }
             throw error;
         }
     }
 
-    // === LUỒNG GEMINI ===
+    // === GEMINI ===
     try {
         const modelName = await getAvailableModel(key);
         const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
-        
         const payload = {
-            contents: [{
-                parts: [{ text: promptText }]
-            }],
-            generationConfig: {
-                temperature: 0.1,
-            }
+            contents: [{ parts: [{ text: promptText }] }],
+            generationConfig: { temperature: 0.1 }
         };
-
         const response = await fetch(API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             throw new Error(errorData.error?.message || `HTTP Error ${response.status}`);
         }
-
         const data = await response.json();
         let translatedText = data.candidates[0].content.parts[0].text;
-        translatedText = translatedText.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
-        return translatedText;
-
+        return translatedText.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
     } catch (error) {
         if (retries > 0) {
-            // Rút ngắn thời gian chờ tối đa
-            let waitTime = 1500; // Mặc định chỉ chờ 1.5 giây
-            
-            const match = error.message.match(/retry in ([\d.]+)s/);
-            if (match && match[1]) {
-                // Nếu API yêu cầu chờ > 5s → đổi Key/Provider luôn, không chờ
-                const apiWait = parseFloat(match[1]);
-                if (apiWait > 5) {
-                    waitTime = 500; // Đổi ngay
-                } else {
-                    waitTime = (apiWait * 1000) + 500;
-                }
-            }
-
-            log(`Lỗi: ${error.message.substring(0, 100)}`, true);
-            log(`=> Đổi Key trong ${(waitTime/1000).toFixed(1)}s...`);
-            
-            await new Promise(r => setTimeout(r, waitTime));
+            log(`Lỗi Gemini: ${error.message.substring(0, 100)}`, true);
+            await new Promise(r => setTimeout(r, 1000));
             switchApiKey();
             activeModelName = null;
-            
             return callTranslationApi(promptText, retries - 1);
         }
         throw error;
     }
 }
 
-// --- SYSTEM PROMPT (CHỈ DỊCH TEXT THUẦN, KHÔNG CÓ SỐ/TIMECODE) ---
-
+// ============================================================
+// SYSTEM PROMPT
+// ============================================================
 function getSystemPrompt() {
     return `Bạn là CHUYÊN GIA DỊCH PHIM TRUNG QUỐC với 10 năm kinh nghiệm, thông thạo các thể loại: cung đấu, tu tiên, tiên hiệp, huyền huyễn, drama cổ trang.
 
@@ -386,63 +295,52 @@ Dịch các dòng sau:
 `;
 }
 
-// --- MAIN TRANSLATION (CHỈ GỬI TEXT, GIỮ NGUYÊN SỐ/TIMECODE) ---
-
+// ============================================================
+// MAIN TRANSLATION
+// ============================================================
 async function startTranslation() {
     if (parsedSubtitles.length === 0) return;
-    
     const keys = getAllApiKeys();
-    if (keys.length === 0) {
-        alert("Vui lòng nhập ít nhất 1 API Key!");
-        return;
-    }
+    if (keys.length === 0) { alert("Vui lòng nhập ít nhất 1 API Key!"); return; }
 
     isTranslating = true;
     currentKeyIndex = 0;
     activeModelName = null;
+    usingFreeApi = false;
+    currentFreeModelIndex = 0;
     startBtn.disabled = true;
     btnText.textContent = "Đang dịch...";
     btnSpinner.classList.remove('hidden');
     progressSection.classList.remove('hidden');
     logConsole.innerHTML = '';
-    
-    // Chia subtitles thành các chunk
+
     const chunks = [];
     for (let i = 0; i < parsedSubtitles.length; i += CHUNK_SIZE) {
-        chunks.push({
-            startIdx: i,
-            endIdx: Math.min(i + CHUNK_SIZE, parsedSubtitles.length)
-        });
+        chunks.push({ startIdx: i, endIdx: Math.min(i + CHUNK_SIZE, parsedSubtitles.length) });
     }
-    
-    const CONCURRENCY_LIMIT = 3;
+
     let currentChunkIdx = 0;
     let completedChunks = 0;
     let hasFatalError = false;
 
     async function processNextChunk() {
         if (currentChunkIdx >= chunks.length || hasFatalError) return;
-        
         const chunkInfo = chunks[currentChunkIdx++];
         const { startIdx, endIdx } = chunkInfo;
         let attempts = 0;
         let success = false;
-        
-        // Tạo prompt CHỈ CHỨA TEXT (có đánh số để map lại)
+
         let textLines = '';
         for (let i = startIdx; i < endIdx; i++) {
             textLines += `[${i}] ${parsedSubtitles[i].text}\n`;
         }
-        
         const promptText = getSystemPrompt() + textLines;
-        
+
         while (!success && attempts < 3 && !hasFatalError) {
             try {
                 log(`Đang dịch dòng ${startIdx + 1} đến ${endIdx}...`);
-                
                 const result = await callTranslationApi(promptText);
-                
-                // Parse kết quả: tìm các dòng [số] text
+
                 const translatedLines = result.split('\n');
                 for (const line of translatedLines) {
                     const match = line.match(/^\[(\d+)\]\s*(.+)/);
@@ -454,120 +352,87 @@ async function startTranslation() {
                         }
                     }
                 }
-                
+
                 success = true;
                 completedChunks++;
-                
                 const percent = Math.round((completedChunks / chunks.length) * 100);
                 progressText.textContent = `Đang dịch: ${completedChunks} / ${chunks.length} phần`;
                 progressPercent.textContent = `${percent}%`;
                 progressBar.style.width = `${percent}%`;
-                
+
+                // Nếu đang dùng Free API: chờ giữa mỗi request để tránh 429
+                if (usingFreeApi) await new Promise(r => setTimeout(r, 4000));
+
             } catch (error) {
                 attempts++;
-                log(`Lỗi khi dịch phần ${startIdx+1}-${endIdx}: ${error.message}`, true);
+                log(`Lỗi phần ${startIdx+1}-${endIdx}: ${error.message}`, true);
                 if (attempts >= 3) {
-                    log(`Đã thử 3 lần nhưng thất bại. Tiến trình bị dừng.`, true);
+                    log(`Đã thử 3 lần nhưng thất bại.`, true);
                     hasFatalError = true;
                     return;
                 }
                 await new Promise(r => setTimeout(r, 2000));
             }
         }
-        
         await processNextChunk();
     }
 
-    log(`Bắt đầu dịch (${chunks.length} phần, ${CONCURRENCY_LIMIT} luồng, ${keys.length} Key)...`);
+    // Gemini: 3 luồng | Free API: 1 luồng
+    const concurrency = usingFreeApi ? 1 : 3;
+    log(`Bắt đầu dịch (${chunks.length} phần, ${concurrency} luồng, ${keys.length} Key)...`);
     log(`[BẢO VỆ] Số thứ tự và Timecode được giữ nguyên 100% từ file gốc.`);
-    
+
     const workers = [];
-    for (let i = 0; i < CONCURRENCY_LIMIT; i++) {
-        workers.push(processNextChunk());
-    }
-    
+    for (let i = 0; i < concurrency; i++) workers.push(processNextChunk());
     await Promise.all(workers);
-    
-    if (hasFatalError) {
-        finishTranslation(false);
-        return;
-    }
-    
-    // --- KIỂM TRA VÀ DỊCH LẠI CÁC DÒNG BỊ LỖI ---
+
+    if (hasFatalError) { finishTranslation(false); return; }
     await verifyAndRetranslate();
 }
 
-/**
- * Kiểm tra xem một dòng text có còn chứa chữ Trung (CJK) không.
- * Trả về true nếu dòng text vẫn còn tiếng Trung chưa được dịch.
- */
-function containsChinese(text) {
-    // CJK Unified Ideographs range
-    return /[\u4e00-\u9fff]/.test(text);
-}
+// ============================================================
+// KIỂM TRA & DỊCH LẠI
+// ============================================================
+function containsChinese(text) { return /[\u4e00-\u9fff]/.test(text); }
 
-/**
- * Tìm tất cả các dòng phụ đề bị lỗi:
- * 1. Chưa được dịch (translatedText rỗng)
- * 2. Vẫn còn chứa chữ Trung (AI trả lại nguyên văn hoặc dịch thiếu)
- */
 function findBadSubtitles() {
-    const badIndices = [];
+    const bad = [];
     for (let i = 0; i < parsedSubtitles.length; i++) {
         const sub = parsedSubtitles[i];
-        if (!sub.translatedText || sub.translatedText.trim() === '') {
-            badIndices.push(i);
-        } else if (containsChinese(sub.translatedText)) {
-            badIndices.push(i);
+        if (!sub.translatedText || sub.translatedText.trim() === '' || containsChinese(sub.translatedText)) {
+            bad.push(i);
         }
     }
-    return badIndices;
+    return bad;
 }
 
-/**
- * KIỂM TRA LẠI LẦN CUỐI & DỊCH LẠI CÁC DÒNG BỊ LỖI
- * Lặp lại tối đa MAX_VERIFY_ROUNDS vòng cho đến khi tất cả đều chuẩn.
- */
 async function verifyAndRetranslate() {
-    const MAX_VERIFY_ROUNDS = 5;
-    
-    for (let round = 1; round <= MAX_VERIFY_ROUNDS; round++) {
+    const MAX_ROUNDS = 5;
+    for (let round = 1; round <= MAX_ROUNDS; round++) {
         const badIndices = findBadSubtitles();
-        
         if (badIndices.length === 0) {
             log(`✅ [KIỂM TRA] Tất cả ${parsedSubtitles.length} dòng đều đã được dịch chuẩn!`);
             finishTranslation(true);
             return;
         }
-        
-        log(`⚠️ [KIỂM TRA LẦN ${round}] Phát hiện ${badIndices.length} dòng bị lỗi. Đang dịch lại...`);
-        
-        // Cập nhật thanh tiến trình
+        log(`⚠️ [KIỂM TRA LẦN ${round}] Phát hiện ${badIndices.length} dòng lỗi. Đang dịch lại...`);
         progressText.textContent = `Kiểm tra lần ${round}: Sửa ${badIndices.length} dòng lỗi...`;
         progressBar.style.width = '50%';
         progressPercent.textContent = `Đang sửa...`;
-        
-        // Chia các dòng lỗi thành chunk nhỏ (20 dòng/lần để AI tập trung hơn)
-        const RETRY_CHUNK_SIZE = 20;
+
+        const RETRY_CHUNK = 20;
         const retryChunks = [];
-        for (let i = 0; i < badIndices.length; i += RETRY_CHUNK_SIZE) {
-            retryChunks.push(badIndices.slice(i, i + RETRY_CHUNK_SIZE));
+        for (let i = 0; i < badIndices.length; i += RETRY_CHUNK) {
+            retryChunks.push(badIndices.slice(i, i + RETRY_CHUNK));
         }
-        
         for (let c = 0; c < retryChunks.length; c++) {
             const chunk = retryChunks[c];
-            
             let textLines = '';
-            for (const idx of chunk) {
-                textLines += `[${idx}] ${parsedSubtitles[idx].text}\n`;
-            }
-            
+            for (const idx of chunk) textLines += `[${idx}] ${parsedSubtitles[idx].text}\n`;
             const promptText = getSystemPrompt() + textLines;
-            
             try {
-                log(`   Đang dịch lại nhóm ${c + 1}/${retryChunks.length} (${chunk.length} dòng)...`);
+                log(`   Dịch lại nhóm ${c+1}/${retryChunks.length} (${chunk.length} dòng)...`);
                 const result = await callTranslationApi(promptText);
-                
                 const translatedLines = result.split('\n');
                 for (const line of translatedLines) {
                     const match = line.match(/^\[(\d+)\]\s*(.+)/);
@@ -580,68 +445,51 @@ async function verifyAndRetranslate() {
                     }
                 }
             } catch (error) {
-                log(`   Lỗi khi dịch lại nhóm ${c + 1}: ${error.message}`, true);
+                log(`   Lỗi nhóm ${c+1}: ${error.message}`, true);
             }
-            
-            // Delay nhỏ giữa các lần gọi
             await new Promise(r => setTimeout(r, 500));
         }
     }
-    
-    // Sau MAX_VERIFY_ROUNDS vòng, kiểm tra lần cuối
     const remaining = findBadSubtitles();
     if (remaining.length > 0) {
-        log(`⚠️ [KẾT QUẢ] Vẫn còn ${remaining.length} dòng chưa dịch được sau ${MAX_VERIFY_ROUNDS} vòng kiểm tra. Các dòng này sẽ giữ nguyên text gốc.`, true);
+        log(`⚠️ Vẫn còn ${remaining.length} dòng chưa dịch được. Giữ nguyên text gốc.`, true);
     } else {
-        log(`✅ [KIỂM TRA] Tất cả dòng đã được dịch chuẩn!`);
+        log(`✅ Tất cả dòng đã được dịch chuẩn!`);
     }
-    
     finishTranslation(true);
 }
 
+// ============================================================
+// FINISH & DOWNLOAD
+// ============================================================
 function finishTranslation(isSuccess) {
     isTranslating = false;
     startBtn.disabled = false;
     btnText.textContent = "Bắt Đầu Dịch";
     btnSpinner.classList.add('hidden');
-    
     if (isSuccess) {
         log(`Dịch hoàn tất! Đang tạo file tải xuống...`);
         createDownload();
         controlsSection.classList.add('hidden');
         progressSection.classList.add('hidden');
         downloadSection.classList.remove('hidden');
-        
-        // Tự động tạo gợi ý tiêu đề YouTube
         log(`🎬 Đang phân tích nội dung và tạo tiêu đề YouTube...`);
         generateTitles();
     }
 }
 
-/**
- * TẠO FILE SRT HOÀN CHỈNH
- * Ghép: header GỐC (số + timecode) + text ĐÃ DỊCH
- * => Đảm bảo tuyệt đối số và timecode KHÔNG BAO GIỜ bị thay đổi
- */
 function createDownload() {
     let srtOutput = '';
-    
     for (let i = 0; i < parsedSubtitles.length; i++) {
         const sub = parsedSubtitles[i];
-        const finalText = sub.translatedText || sub.text; // Nếu chưa dịch được thì giữ text gốc
-        
+        const finalText = sub.translatedText || sub.text;
         srtOutput += sub.header + '\n' + finalText + '\n\n';
     }
-    
     const blob = new Blob([srtOutput.trim()], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
-    
-    const originalName = currentFile.name;
-    const nameWithoutExt = originalName.substring(0, originalName.lastIndexOf('.'));
-    const newName = `${nameWithoutExt}_vi.srt`;
-    
+    const nameWithoutExt = currentFile.name.substring(0, currentFile.name.lastIndexOf('.'));
     downloadLink.href = url;
-    downloadLink.download = newName;
+    downloadLink.download = `${nameWithoutExt}_vi.srt`;
 }
 
 function resetApp() {
@@ -650,55 +498,43 @@ function resetApp() {
     fileInput.value = '';
     currentKeyIndex = 0;
     activeModelName = null;
-    
+    usingFreeApi = false;
+    currentFreeModelIndex = 0;
     uploadArea.classList.remove('hidden');
     controlsSection.classList.add('hidden');
     progressSection.classList.add('hidden');
     downloadSection.classList.add('hidden');
-    
-    // Reset titles section
     const titlesSection = document.getElementById('titlesSection');
     const titlesList = document.getElementById('titlesList');
     titlesSection.classList.add('hidden');
     titlesList.innerHTML = '';
-    
     progressBar.style.width = '0%';
     progressText.textContent = `Đang dịch: 0 / 0`;
     progressPercent.textContent = `0%`;
 }
 
 // ============================================================
-// TÍNH NĂNG GỢI Ý TIÊU ĐỀ YOUTUBE
+// GỢI Ý TIÊU ĐỀ YOUTUBE
 // ============================================================
-
 const titlesSection = document.getElementById('titlesSection');
 const titlesLoading = document.getElementById('titlesLoading');
 const titlesList = document.getElementById('titlesList');
 const copySelectedBtn = document.getElementById('copySelectedBtn');
 
-/**
- * Lấy tóm tắt nội dung từ các phụ đề đã dịch (tối đa 3000 ký tự)
- */
 function getContentSummary() {
     let content = '';
     for (const sub of parsedSubtitles) {
-        const text = sub.translatedText || sub.text;
-        content += text + ' ';
+        content += (sub.translatedText || sub.text) + ' ';
         if (content.length > 3000) break;
     }
     return content.trim();
 }
 
-/**
- * Gọi AI để tạo 20 tiêu đề YouTube
- */
 async function generateTitles() {
     titlesSection.classList.remove('hidden');
     titlesLoading.classList.remove('hidden');
     titlesList.innerHTML = '';
-    
     const contentSummary = getContentSummary();
-    
     const prompt = `Bạn là chuyên gia YouTube tại thị trường Việt Nam, chuyên về phim Trung Quốc.
 
 Dựa vào nội dung phụ đề phim bên dưới, hãy đề xuất ĐÚNG 20 tiêu đề YouTube.
@@ -718,108 +554,64 @@ Hệ Thống Trả Thưởng Gấp 100 Lần, Cả Thế Giới Sốc ||| 9.8%
 
 NỘI DUNG PHIM:
 ${contentSummary}`;
-
     try {
         const result = await callTranslationApi(prompt);
         parseTitlesResult(result);
     } catch (error) {
         titlesList.innerHTML = `<div style="color:#fca5a5;text-align:center;padding:16px;">Lỗi tạo tiêu đề: ${error.message}</div>`;
     }
-    
     titlesLoading.classList.add('hidden');
 }
 
-/**
- * Parse kết quả từ AI thành danh sách tiêu đề + CTR
- */
 function parseTitlesResult(rawText) {
     titlesList.innerHTML = '';
     const lines = rawText.split('\n').filter(l => l.trim());
     let count = 0;
-    
     for (const line of lines) {
-        // Tìm pattern: Tiêu đề ||| CTR%
         const parts = line.split('|||');
         if (parts.length < 2) continue;
-        
-        const title = parts[0].trim().replace(/^\d+[\.\)]\s*/, ''); // Bỏ số đầu dòng nếu có
-        let ctrText = parts[1].trim().replace('%', '');
-        const ctrValue = parseFloat(ctrText);
-        
-        if (!title || isNaN(ctrValue)) continue;
-        if (ctrValue < 7) continue; // Chỉ lấy CTR >= 7%
-        
+        const title = parts[0].trim().replace(/^\d+[\.)\]]\s*/, '');
+        const ctrValue = parseFloat(parts[1].trim().replace('%', ''));
+        if (!title || isNaN(ctrValue) || ctrValue < 7) continue;
         count++;
-        
         const item = document.createElement('div');
         item.className = 'title-item';
-        
         const ctrClass = ctrValue >= 10 ? 'ctr-high' : 'ctr-medium';
-        
         item.innerHTML = `
             <input type="checkbox" class="title-checkbox" data-title="${title.replace(/"/g, '&quot;')}">
             <span class="title-text">${count}. ${title}</span>
-            <span class="title-ctr ${ctrClass}">${ctrValue.toFixed(1)}%</span>
-        `;
-        
-        // Click vào item cũng toggle checkbox
+            <span class="title-ctr ${ctrClass}">${ctrValue.toFixed(1)}%</span>`;
         item.addEventListener('click', (e) => {
             if (e.target.type === 'checkbox') return;
             const cb = item.querySelector('.title-checkbox');
             cb.checked = !cb.checked;
             item.classList.toggle('selected', cb.checked);
         });
-        
         item.querySelector('.title-checkbox').addEventListener('change', (e) => {
             item.classList.toggle('selected', e.target.checked);
         });
-        
         titlesList.appendChild(item);
     }
-    
     if (count === 0) {
-        titlesList.innerHTML = `<div style="color:#fca5a5;text-align:center;padding:16px;">Không tìm thấy tiêu đề phù hợp. Vui lòng thử lại.</div>`;
+        titlesList.innerHTML = `<div style="color:#fca5a5;text-align:center;padding:16px;">Không tìm thấy tiêu đề phù hợp.</div>`;
     }
 }
 
-/**
- * Copy các tiêu đề đã chọn vào clipboard
- */
 copySelectedBtn.addEventListener('click', () => {
     const checked = titlesList.querySelectorAll('.title-checkbox:checked');
-    
-    if (checked.length === 0) {
-        alert('Vui lòng chọn ít nhất 1 tiêu đề để copy!');
-        return;
-    }
-    
+    if (checked.length === 0) { alert('Vui lòng chọn ít nhất 1 tiêu đề để copy!'); return; }
     const titles = [];
-    checked.forEach(cb => {
-        titles.push(cb.dataset.title);
-    });
-    
+    checked.forEach(cb => titles.push(cb.dataset.title));
     const textToCopy = titles.join('\n');
-    
     navigator.clipboard.writeText(textToCopy).then(() => {
         copySelectedBtn.textContent = '✅ Đã copy thành công!';
         copySelectedBtn.classList.add('copied');
-        setTimeout(() => {
-            copySelectedBtn.textContent = '📋 Copy các tiêu đề đã chọn';
-            copySelectedBtn.classList.remove('copied');
-        }, 2000);
+        setTimeout(() => { copySelectedBtn.textContent = '📋 Copy các tiêu đề đã chọn'; copySelectedBtn.classList.remove('copied'); }, 2000);
     }).catch(() => {
-        // Fallback cho trình duyệt cũ
         const ta = document.createElement('textarea');
-        ta.value = textToCopy;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
+        ta.value = textToCopy; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
         copySelectedBtn.textContent = '✅ Đã copy thành công!';
         copySelectedBtn.classList.add('copied');
-        setTimeout(() => {
-            copySelectedBtn.textContent = '📋 Copy các tiêu đề đã chọn';
-            copySelectedBtn.classList.remove('copied');
-        }, 2000);
+        setTimeout(() => { copySelectedBtn.textContent = '📋 Copy các tiêu đề đã chọn'; copySelectedBtn.classList.remove('copied'); }, 2000);
     });
 });
