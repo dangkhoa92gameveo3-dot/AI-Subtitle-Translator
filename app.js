@@ -226,7 +226,7 @@ async function getAvailableModels(apiKey) {
 
 // --- OLLAMA LOCAL API ---
 async function callOllamaApi(promptText) {
-    const modelName = ollamaModelInput.value.trim() || "qwen3.5:4b";
+    const modelName = ollamaModelInput.value.trim() || "qwen3:4b";
     const payload = {
         model: modelName,
         system: "Bạn là hệ thống dịch thuật phim Trung Quốc chuyên nghiệp. Dịch từng dòng tiếng Trung sang tiếng Việt. Giữ nguyên [số] đầu dòng. KHÔNG giải thích, KHÔNG thêm bớt dòng.",
