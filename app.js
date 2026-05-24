@@ -139,7 +139,8 @@ function parseSrt(rawText) {
 // HỆ THỐNG API GEMINI (LUÂN PHIÊN KEY)
 // ============================================================
 
-let activeModelName = null;
+let currentAvailableModels = [];
+let currentModelIndex = 0;
 
 function getAllApiKeys() {
     const keys = [];
@@ -163,17 +164,19 @@ function switchApiKey() {
     const keys = getAllApiKeys();
     currentKeyIndex++;
     if (currentKeyIndex < keys.length) {
-        activeModelName = null;
+        currentAvailableModels = [];
+        currentModelIndex = 0;
         log(`[⚡ Đổi Key] Chuyển sang Gemini Key ${currentKeyIndex + 1}/${keys.length}`);
     } else {
         currentKeyIndex = 0;
-        activeModelName = null;
+        currentAvailableModels = [];
+        currentModelIndex = 0;
         log(`[🔄 Hết vòng Key] Quay lại thử Gemini Key 1 (đợi 5s)`);
     }
 }
 
-async function getAvailableModel(apiKey) {
-    if (activeModelName) return activeModelName;
+async function getAvailableModels(apiKey) {
+    if (currentAvailableModels.length > 0) return currentAvailableModels;
     const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
     try {
         const res = await fetch(url);
@@ -182,24 +185,29 @@ async function getAvailableModel(apiKey) {
         
         // Ưu tiên các mô hình gemini miễn phí
         const priorities = [
-            m => m.name.includes("gemini-2.0-flash"),
             m => m.name.includes("gemini-2.5-flash"),
+            m => m.name.includes("gemini-2.0-flash"),
             m => m.name.includes("gemini-1.5-flash") && !m.name.includes("8b"),
             m => m.name.includes("gemini-1.5-flash-8b"),
+            m => m.name.includes("gemini-1.5-pro"),
             m => m.name.includes("gemini-1.0-pro") || m.name.endsWith("gemini-pro"),
             m => m.name.includes("gemini"),
         ];
+        
+        let validModels = [];
         for (const check of priorities) {
             const target = data.models.find(m => check(m) && m.supportedGenerationMethods?.includes("generateContent"));
             if (target) {
-                activeModelName = target.name.split('/').pop();
-                log(`[Model] Đang dùng mô hình: ${activeModelName}`);
-                return activeModelName;
+                validModels.push(target.name.split('/').pop());
             }
         }
-        throw new Error("Không tìm thấy model Gemini nào khả dụng.");
+        
+        // Loại bỏ trùng lặp nếu có
+        currentAvailableModels = [...new Set(validModels)];
+        if (currentAvailableModels.length === 0) throw new Error("Không tìm thấy model Gemini nào khả dụng.");
+        return currentAvailableModels;
     } catch (e) {
-        throw new Error("Lỗi kết nối Gemini API: " + e.message);
+        throw new Error("Lỗi lấy danh sách Model: " + e.message);
     }
 }
 
@@ -209,7 +217,12 @@ async function callTranslationApi(promptText, retries = 15) {
     if (!key) throw new Error("Không có API Key nào được nhập!");
 
     try {
-        const modelName = await getAvailableModel(key);
+        const models = await getAvailableModels(key);
+        if (currentModelIndex >= models.length) {
+            currentModelIndex = 0;
+        }
+        const modelName = models[currentModelIndex];
+        
         const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
         const payload = {
             contents: [{ parts: [{ text: promptText }] }],
@@ -229,7 +242,21 @@ async function callTranslationApi(promptText, retries = 15) {
         return translatedText.replace(/^```[a-z]*\n/i, '').replace(/\nflug$/i, '').replace(/\n```$/i, '').trim();
     } catch (error) {
         if (retries > 0) {
-            log(`Lỗi Gemini: ${error.message.substring(0, 100)}`, true);
+            const currentModelName = currentAvailableModels[currentModelIndex] || "Gemini";
+            log(`Lỗi ${currentModelName}: ${error.message.substring(0, 100)}`, true);
+            
+            // Nếu lỗi do hết Quota (429), thử chuyển model khác trên CÙNG 1 Key
+            const isQuotaError = error.message.toLowerCase().includes("quota") || error.message.includes("429") || error.message.toLowerCase().includes("exhausted");
+            if (isQuotaError) {
+                currentModelIndex++;
+                if (currentModelIndex < currentAvailableModels.length) {
+                    log(`=> Thử chuyển sang model: ${currentAvailableModels[currentModelIndex]}`);
+                    await new Promise(r => setTimeout(r, 1000));
+                    return callTranslationApi(promptText, retries - 1);
+                }
+            }
+            
+            // Nếu đã thử hết model của Key này, hoặc lỗi khác -> Đổi Key
             switchApiKey();
             if (currentKeyIndex === 0) {
                 await new Promise(r => setTimeout(r, 5000));
