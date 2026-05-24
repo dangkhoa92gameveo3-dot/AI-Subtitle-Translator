@@ -16,7 +16,6 @@ const downloadLink = document.getElementById('downloadLink');
 const resetBtn = document.getElementById('resetBtn');
 const keyInputsContainer = document.getElementById('keyInputsContainer');
 const addKeyBtn = document.getElementById('addKeyBtn');
-const useOllamaBtn = document.getElementById('useOllamaBtn');
 
 // Variables
 let currentFile = null;
@@ -33,16 +32,9 @@ function saveSettings() {
         if (val) keys.push(val);
     });
     localStorage.setItem('gemini_api_keys', JSON.stringify(keys));
-    localStorage.setItem('use_ollama', useOllamaBtn.checked);
 }
 
 function loadSettings() {
-    // Load Ollama setting
-    const savedOllama = localStorage.getItem('use_ollama');
-    if (savedOllama !== null) {
-        useOllamaBtn.checked = savedOllama === 'true';
-    }
-    
     // Load API Keys
     const savedKeys = JSON.parse(localStorage.getItem('gemini_api_keys') || '[]');
     keyInputsContainer.innerHTML = ''; // Clear default
@@ -81,8 +73,6 @@ keyInputsContainer.addEventListener('click', (e) => {
         }
     }
 });
-
-useOllamaBtn.addEventListener('change', saveSettings);
 
 // Initialize settings on load
 loadSettings();
