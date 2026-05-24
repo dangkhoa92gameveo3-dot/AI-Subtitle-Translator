@@ -570,6 +570,10 @@ function finishTranslation(isSuccess) {
         controlsSection.classList.add('hidden');
         progressSection.classList.add('hidden');
         downloadSection.classList.remove('hidden');
+        
+        // Tự động tạo gợi ý tiêu đề YouTube
+        log(`🎬 Đang phân tích nội dung và tạo tiêu đề YouTube...`);
+        generateTitles();
     }
 }
 
@@ -611,7 +615,170 @@ function resetApp() {
     progressSection.classList.add('hidden');
     downloadSection.classList.add('hidden');
     
+    // Reset titles section
+    const titlesSection = document.getElementById('titlesSection');
+    const titlesList = document.getElementById('titlesList');
+    titlesSection.classList.add('hidden');
+    titlesList.innerHTML = '';
+    
     progressBar.style.width = '0%';
     progressText.textContent = `Đang dịch: 0 / 0`;
     progressPercent.textContent = `0%`;
 }
+
+// ============================================================
+// TÍNH NĂNG GỢI Ý TIÊU ĐỀ YOUTUBE
+// ============================================================
+
+const titlesSection = document.getElementById('titlesSection');
+const titlesLoading = document.getElementById('titlesLoading');
+const titlesList = document.getElementById('titlesList');
+const copySelectedBtn = document.getElementById('copySelectedBtn');
+
+/**
+ * Lấy tóm tắt nội dung từ các phụ đề đã dịch (tối đa 3000 ký tự)
+ */
+function getContentSummary() {
+    let content = '';
+    for (const sub of parsedSubtitles) {
+        const text = sub.translatedText || sub.text;
+        content += text + ' ';
+        if (content.length > 3000) break;
+    }
+    return content.trim();
+}
+
+/**
+ * Gọi AI để tạo 20 tiêu đề YouTube
+ */
+async function generateTitles() {
+    titlesSection.classList.remove('hidden');
+    titlesLoading.classList.remove('hidden');
+    titlesList.innerHTML = '';
+    
+    const contentSummary = getContentSummary();
+    
+    const prompt = `Bạn là chuyên gia YouTube tại thị trường Việt Nam, chuyên về phim Trung Quốc.
+
+Dựa vào nội dung phụ đề phim bên dưới, hãy đề xuất ĐÚNG 20 tiêu đề YouTube.
+
+YÊU CẦU BẮT BUỘC:
+1. Tiêu đề phải câu view, ngắn gọn (dưới 70 ký tự).
+2. Tuân thủ nguyên tắc cộng đồng YouTube (không bạo lực, không khiêu dâm, không clickbait quá mức).
+3. Phù hợp thị trường Việt Nam, dùng từ ngữ gây tò mò cho khán giả Việt.
+4. Đánh giá CTR % dự kiến tại thị trường Việt Nam.
+5. CHỈ đưa ra những tiêu đề có CTR từ 7% trở lên.
+
+ĐỊNH DẠNG OUTPUT (TUYỆT ĐỐI TUÂN THỦ, KHÔNG GIẢI THÍCH):
+Mỗi dòng đúng định dạng: TIÊU ĐỀ ||| CTR%
+Ví dụ:
+Nữ Đế Long Tộc Bị Đánh Bại, Kẻ Yếu Nhất Lật Kèo ||| 12.5%
+Hệ Thống Trả Thưởng Gấp 100 Lần, Cả Thế Giới Sốc ||| 9.8%
+
+NỘI DUNG PHIM:
+${contentSummary}`;
+
+    try {
+        const result = await callTranslationApi(prompt);
+        parseTitlesResult(result);
+    } catch (error) {
+        titlesList.innerHTML = `<div style="color:#fca5a5;text-align:center;padding:16px;">Lỗi tạo tiêu đề: ${error.message}</div>`;
+    }
+    
+    titlesLoading.classList.add('hidden');
+}
+
+/**
+ * Parse kết quả từ AI thành danh sách tiêu đề + CTR
+ */
+function parseTitlesResult(rawText) {
+    titlesList.innerHTML = '';
+    const lines = rawText.split('\n').filter(l => l.trim());
+    let count = 0;
+    
+    for (const line of lines) {
+        // Tìm pattern: Tiêu đề ||| CTR%
+        const parts = line.split('|||');
+        if (parts.length < 2) continue;
+        
+        const title = parts[0].trim().replace(/^\d+[\.\)]\s*/, ''); // Bỏ số đầu dòng nếu có
+        let ctrText = parts[1].trim().replace('%', '');
+        const ctrValue = parseFloat(ctrText);
+        
+        if (!title || isNaN(ctrValue)) continue;
+        if (ctrValue < 7) continue; // Chỉ lấy CTR >= 7%
+        
+        count++;
+        
+        const item = document.createElement('div');
+        item.className = 'title-item';
+        
+        const ctrClass = ctrValue >= 10 ? 'ctr-high' : 'ctr-medium';
+        
+        item.innerHTML = `
+            <input type="checkbox" class="title-checkbox" data-title="${title.replace(/"/g, '&quot;')}">
+            <span class="title-text">${count}. ${title}</span>
+            <span class="title-ctr ${ctrClass}">${ctrValue.toFixed(1)}%</span>
+        `;
+        
+        // Click vào item cũng toggle checkbox
+        item.addEventListener('click', (e) => {
+            if (e.target.type === 'checkbox') return;
+            const cb = item.querySelector('.title-checkbox');
+            cb.checked = !cb.checked;
+            item.classList.toggle('selected', cb.checked);
+        });
+        
+        item.querySelector('.title-checkbox').addEventListener('change', (e) => {
+            item.classList.toggle('selected', e.target.checked);
+        });
+        
+        titlesList.appendChild(item);
+    }
+    
+    if (count === 0) {
+        titlesList.innerHTML = `<div style="color:#fca5a5;text-align:center;padding:16px;">Không tìm thấy tiêu đề phù hợp. Vui lòng thử lại.</div>`;
+    }
+}
+
+/**
+ * Copy các tiêu đề đã chọn vào clipboard
+ */
+copySelectedBtn.addEventListener('click', () => {
+    const checked = titlesList.querySelectorAll('.title-checkbox:checked');
+    
+    if (checked.length === 0) {
+        alert('Vui lòng chọn ít nhất 1 tiêu đề để copy!');
+        return;
+    }
+    
+    const titles = [];
+    checked.forEach(cb => {
+        titles.push(cb.dataset.title);
+    });
+    
+    const textToCopy = titles.join('\n');
+    
+    navigator.clipboard.writeText(textToCopy).then(() => {
+        copySelectedBtn.textContent = '✅ Đã copy thành công!';
+        copySelectedBtn.classList.add('copied');
+        setTimeout(() => {
+            copySelectedBtn.textContent = '📋 Copy các tiêu đề đã chọn';
+            copySelectedBtn.classList.remove('copied');
+        }, 2000);
+    }).catch(() => {
+        // Fallback cho trình duyệt cũ
+        const ta = document.createElement('textarea');
+        ta.value = textToCopy;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        copySelectedBtn.textContent = '✅ Đã copy thành công!';
+        copySelectedBtn.classList.add('copied');
+        setTimeout(() => {
+            copySelectedBtn.textContent = '📋 Copy các tiêu đề đã chọn';
+            copySelectedBtn.classList.remove('copied');
+        }, 2000);
+    });
+});

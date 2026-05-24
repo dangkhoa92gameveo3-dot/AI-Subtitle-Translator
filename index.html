@@ -70,6 +70,20 @@
             <a id="downloadLink" class="success-btn" href="#" download>
                 Tải file phụ đề đã dịch (.srt)
             </a>
+            
+            <div class="titles-section hidden" id="titlesSection">
+                <div class="titles-header">
+                    <h2>🎬 Gợi ý Tiêu đề YouTube</h2>
+                    <p>Chọn tiêu đề bạn thích rồi nhấn Copy</p>
+                </div>
+                <div class="titles-loading hidden" id="titlesLoading">
+                    <div class="spinner"></div>
+                    <span>Đang phân tích nội dung và tạo tiêu đề...</span>
+                </div>
+                <div class="titles-list" id="titlesList"></div>
+                <button class="copy-btn" id="copySelectedBtn">📋 Copy các tiêu đề đã chọn</button>
+            </div>
+            
             <button class="ghost-btn" id="resetBtn">Dịch file khác</button>
         </section>
 
