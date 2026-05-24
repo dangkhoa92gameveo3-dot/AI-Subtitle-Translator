@@ -336,9 +336,9 @@ async function startTranslation() {
         }
         const promptText = getSystemPrompt() + textLines;
 
-        while (!success && attempts < 3 && !hasFatalError) {
+        while (!success && attempts < 1000 && !hasFatalError) {
             try {
-                log(`Đang dịch dòng ${startIdx + 1} đến ${endIdx}...`);
+                log(`Đang dịch dòng ${startIdx + 1} đến ${endIdx}... (Thử lần ${attempts + 1})`);
                 const result = await callTranslationApi(promptText);
 
                 const translatedLines = result.split('\n');
@@ -366,12 +366,14 @@ async function startTranslation() {
             } catch (error) {
                 attempts++;
                 log(`Lỗi phần ${startIdx+1}-${endIdx}: ${error.message}`, true);
-                if (attempts >= 3) {
-                    log(`Đã thử 3 lần nhưng thất bại.`, true);
+                if (attempts >= 1000) {
+                    log(`Đã thử 1000 lần nhưng thất bại. Tiến trình bị dừng.`, true);
                     hasFatalError = true;
                     return;
                 }
-                await new Promise(r => setTimeout(r, 2000));
+                // Nếu bị 429 thì chờ 8s, lỗi khác chờ 2s
+                const is429 = error.message.includes('429');
+                await new Promise(r => setTimeout(r, is429 ? 8000 : 2000));
             }
         }
         await processNextChunk();
