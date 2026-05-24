@@ -237,12 +237,18 @@ async function callOllamaApi(promptText) {
         }
     };
     
+    // Đặt timeout 15 phút (900000ms) để tránh kẹt vĩnh viễn nếu máy yếu
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 900000); 
+
     try {
         const response = await fetch('http://localhost:11434/api/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
         
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}. Kiểm tra lại Ollama đã bật chưa và có tải model '${modelName}' chưa?`);
@@ -251,6 +257,7 @@ async function callOllamaApi(promptText) {
         const data = await response.json();
         return data.response.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
     } catch (err) {
+        if (err.name === 'AbortError') throw new Error(`Ollama phản hồi quá lâu (Timeout).`);
         throw new Error(`Không kết nối được Ollama. Lỗi: ${err.message}`);
     }
 }
@@ -400,8 +407,10 @@ async function startTranslation() {
     logConsole.innerHTML = '';
 
     const chunks = [];
-    for (let i = 0; i < parsedSubtitles.length; i += CHUNK_SIZE) {
-        chunks.push({ startIdx: i, endIdx: Math.min(i + CHUNK_SIZE, parsedSubtitles.length) });
+    const currentChunkSize = useOllamaBtn.checked ? 10 : CHUNK_SIZE; // Dùng 10 dòng/chunk cho Ollama để máy không bị treo
+    
+    for (let i = 0; i < parsedSubtitles.length; i += currentChunkSize) {
+        chunks.push({ startIdx: i, endIdx: Math.min(i + currentChunkSize, parsedSubtitles.length) });
     }
 
     let currentChunkIdx = 0;
