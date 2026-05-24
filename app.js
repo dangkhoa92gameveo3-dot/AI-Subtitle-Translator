@@ -159,7 +159,17 @@ function parseSrt(rawText) {
     });
 }
 
-// --- API ROTATION LOGIC ---
+// --- API ROTATION LOGIC (ĐA NGUỒN) ---
+
+// Danh sách các nguồn API miễn phí (KHÔNG cần Key)
+const FREE_PROVIDERS = [
+    { name: 'Pollinations (GPT-4o-mini)', model: 'openai', url: 'https://text.pollinations.ai/' },
+    { name: 'Pollinations (Mistral)', model: 'mistral', url: 'https://text.pollinations.ai/' },
+    { name: 'Pollinations (Llama)', model: 'llama', url: 'https://text.pollinations.ai/' },
+    { name: 'Pollinations (DeepSeek)', model: 'deepseek', url: 'https://text.pollinations.ai/' },
+    { name: 'Pollinations (Qwen)', model: 'qwen', url: 'https://text.pollinations.ai/' },
+];
+let currentFreeProviderIndex = 0;
 
 function getActiveApiKey() {
     const keys = getAllApiKeys();
@@ -174,13 +184,20 @@ function switchApiKey() {
     currentKeyIndex++;
     
     if (currentKeyIndex < keys.length) {
-        log(`[Chuyển đổi] Đã chuyển sang API Key ${currentKeyIndex + 1} / ${keys.length}.`);
+        log(`[⚡ Đổi Key] Gemini Key ${currentKeyIndex + 1}/${keys.length}`);
     } else if (currentKeyIndex === keys.length) {
-        log(`[Hệ thống] Tất cả ${keys.length} Key Gemini đều bị lỗi. TỰ ĐỘNG CHUYỂN SANG AI MIỄN PHÍ DỰ PHÒNG!`);
+        log(`[🔄 Chuyển] Gemini hết quota → Dùng AI miễn phí: ${FREE_PROVIDERS[currentFreeProviderIndex].name}`);
     } else {
+        // Quay vòng: thử lại Gemini key đầu tiên
         currentKeyIndex = 0;
-        log(`[Hệ thống] Đã quay vòng lại API Key 1.`);
+        activeModelName = null;
+        log(`[🔄 Quay vòng] Thử lại Gemini Key 1`);
     }
+}
+
+function switchFreeProvider() {
+    currentFreeProviderIndex = (currentFreeProviderIndex + 1) % FREE_PROVIDERS.length;
+    log(`[🔄 Đổi AI miễn phí] → ${FREE_PROVIDERS[currentFreeProviderIndex].name}`);
 }
 
 let activeModelName = null;
@@ -191,68 +208,74 @@ async function getAvailableModel(apiKey) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
     const res = await fetch(url);
     if (!res.ok) {
-        throw new Error("Không thể lấy danh sách model. API Key có thể không hợp lệ.");
+        throw new Error("API Key không hợp lệ.");
     }
     const data = await res.json();
     
-    let target = data.models.find(m => (m.name.endsWith("gemini-1.5-flash") || m.name.endsWith("gemini-1.5-flash-latest")) && m.supportedGenerationMethods?.includes("generateContent"));
+    // Ưu tiên: gemini-2.0-flash > gemini-1.5-flash > gemini-pro > bất kỳ gemini nào
+    const priorities = [
+        m => m.name.includes("gemini-2.0-flash"),
+        m => m.name.includes("gemini-2.5-flash"),
+        m => m.name.includes("gemini-1.5-flash"),
+        m => m.name.includes("gemini-1.0-pro") || m.name.endsWith("gemini-pro"),
+        m => m.name.includes("gemini"),
+    ];
     
-    if (!target) {
-        target = data.models.find(m => (m.name.endsWith("gemini-1.0-pro") || m.name.endsWith("gemini-pro")) && m.supportedGenerationMethods?.includes("generateContent"));
+    for (const check of priorities) {
+        const target = data.models.find(m => check(m) && m.supportedGenerationMethods?.includes("generateContent"));
+        if (target) {
+            activeModelName = target.name.split('/').pop();
+            log(`[Model] ${activeModelName}`);
+            return activeModelName;
+        }
     }
     
-    if (!target) {
-        target = data.models.find(m => m.name.includes("gemini") && m.supportedGenerationMethods?.includes("generateContent"));
-    }
-    
-    if (target) {
-        activeModelName = target.name.split('/').pop();
-        log(`Đã tự động chọn Model: ${activeModelName}`);
-        return activeModelName;
-    }
-    throw new Error("API Key không hợp lệ hoặc không có model nào hỗ trợ.");
+    throw new Error("Không tìm thấy model Gemini nào.");
 }
 
 // --- API CALLERS ---
 
 async function callFreeFallbackApi(promptText) {
-    const url = `https://text.pollinations.ai/`;
+    const provider = FREE_PROVIDERS[currentFreeProviderIndex];
+    
     const payload = {
         messages: [
-            { role: "system", content: "Bạn là hệ thống dịch thuật tự động. Dịch từng dòng tiếng Trung sang tiếng Việt. Mỗi dòng input tương ứng 1 dòng output. KHÔNG giải thích, KHÔNG thêm bớt dòng." },
+            { role: "system", content: "Bạn là hệ thống dịch thuật phim Trung Quốc chuyên nghiệp. Dịch từng dòng tiếng Trung sang tiếng Việt. Giữ nguyên [số] đầu dòng. KHÔNG giải thích, KHÔNG thêm bớt dòng." },
             { role: "user", content: promptText }
         ],
-        model: "openai"
+        model: provider.model
     };
     
-    const response = await fetch(url, {
+    const response = await fetch(provider.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     });
 
-    if (!response.ok) throw new Error(`Fallback API HTTP Error ${response.status}`);
+    if (!response.ok) throw new Error(`${provider.name}: HTTP ${response.status}`);
     const text = await response.text();
     return text.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
 }
 
-async function callTranslationApi(promptText, retries = 10) {
+async function callTranslationApi(promptText, retries = 15) {
     const key = getActiveApiKey();
     
+    // === LUỒNG API MIỄN PHÍ ===
     if (key === "FREE_FALLBACK") {
         try {
             return await callFreeFallbackApi(promptText);
         } catch (error) {
             if (retries > 0) {
-                log(`Lỗi API Dự phòng: ${error.message}. Thử lại...`, true);
-                switchApiKey();
-                await new Promise(r => setTimeout(r, 5000));
+                log(`Lỗi ${FREE_PROVIDERS[currentFreeProviderIndex].name}: ${error.message.substring(0, 80)}`, true);
+                switchFreeProvider(); // Đổi sang AI miễn phí khác ngay lập tức
+                await new Promise(r => setTimeout(r, 1000)); // Chờ 1 giây thôi
                 return callTranslationApi(promptText, retries - 1);
             }
             throw error;
         }
     }
 
+    // === LUỒNG GEMINI ===
     try {
         const modelName = await getAvailableModel(key);
         const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`;
@@ -284,17 +307,22 @@ async function callTranslationApi(promptText, retries = 10) {
 
     } catch (error) {
         if (retries > 0) {
-            let waitTime = 3000;
+            // Rút ngắn thời gian chờ tối đa
+            let waitTime = 1500; // Mặc định chỉ chờ 1.5 giây
             
             const match = error.message.match(/retry in ([\d.]+)s/);
             if (match && match[1]) {
-                waitTime = (parseFloat(match[1]) * 1000) + 1000;
-            } else if (error.message.includes('quota') || error.message.includes('exceeded')) {
-                waitTime = 15000;
+                // Nếu API yêu cầu chờ > 5s → đổi Key/Provider luôn, không chờ
+                const apiWait = parseFloat(match[1]);
+                if (apiWait > 5) {
+                    waitTime = 500; // Đổi ngay
+                } else {
+                    waitTime = (apiWait * 1000) + 500;
+                }
             }
 
-            log(`Lỗi API: ${error.message.substring(0, 120)}...`, true);
-            log(`=> Chờ ${(waitTime/1000).toFixed(0)}s rồi đổi Key...`);
+            log(`Lỗi: ${error.message.substring(0, 100)}`, true);
+            log(`=> Đổi Key trong ${(waitTime/1000).toFixed(1)}s...`);
             
             await new Promise(r => setTimeout(r, waitTime));
             switchApiKey();
