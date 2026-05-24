@@ -449,9 +449,113 @@ async function startTranslation() {
     
     if (hasFatalError) {
         finishTranslation(false);
-    } else {
-        finishTranslation(true);
+        return;
     }
+    
+    // --- KIỂM TRA VÀ DỊCH LẠI CÁC DÒNG BỊ LỖI ---
+    await verifyAndRetranslate();
+}
+
+/**
+ * Kiểm tra xem một dòng text có còn chứa chữ Trung (CJK) không.
+ * Trả về true nếu dòng text vẫn còn tiếng Trung chưa được dịch.
+ */
+function containsChinese(text) {
+    // CJK Unified Ideographs range
+    return /[\u4e00-\u9fff]/.test(text);
+}
+
+/**
+ * Tìm tất cả các dòng phụ đề bị lỗi:
+ * 1. Chưa được dịch (translatedText rỗng)
+ * 2. Vẫn còn chứa chữ Trung (AI trả lại nguyên văn hoặc dịch thiếu)
+ */
+function findBadSubtitles() {
+    const badIndices = [];
+    for (let i = 0; i < parsedSubtitles.length; i++) {
+        const sub = parsedSubtitles[i];
+        if (!sub.translatedText || sub.translatedText.trim() === '') {
+            badIndices.push(i);
+        } else if (containsChinese(sub.translatedText)) {
+            badIndices.push(i);
+        }
+    }
+    return badIndices;
+}
+
+/**
+ * KIỂM TRA LẠI LẦN CUỐI & DỊCH LẠI CÁC DÒNG BỊ LỖI
+ * Lặp lại tối đa MAX_VERIFY_ROUNDS vòng cho đến khi tất cả đều chuẩn.
+ */
+async function verifyAndRetranslate() {
+    const MAX_VERIFY_ROUNDS = 5;
+    
+    for (let round = 1; round <= MAX_VERIFY_ROUNDS; round++) {
+        const badIndices = findBadSubtitles();
+        
+        if (badIndices.length === 0) {
+            log(`✅ [KIỂM TRA] Tất cả ${parsedSubtitles.length} dòng đều đã được dịch chuẩn!`);
+            finishTranslation(true);
+            return;
+        }
+        
+        log(`⚠️ [KIỂM TRA LẦN ${round}] Phát hiện ${badIndices.length} dòng bị lỗi. Đang dịch lại...`);
+        
+        // Cập nhật thanh tiến trình
+        progressText.textContent = `Kiểm tra lần ${round}: Sửa ${badIndices.length} dòng lỗi...`;
+        progressBar.style.width = '50%';
+        progressPercent.textContent = `Đang sửa...`;
+        
+        // Chia các dòng lỗi thành chunk nhỏ (20 dòng/lần để AI tập trung hơn)
+        const RETRY_CHUNK_SIZE = 20;
+        const retryChunks = [];
+        for (let i = 0; i < badIndices.length; i += RETRY_CHUNK_SIZE) {
+            retryChunks.push(badIndices.slice(i, i + RETRY_CHUNK_SIZE));
+        }
+        
+        for (let c = 0; c < retryChunks.length; c++) {
+            const chunk = retryChunks[c];
+            
+            let textLines = '';
+            for (const idx of chunk) {
+                textLines += `[${idx}] ${parsedSubtitles[idx].text}\n`;
+            }
+            
+            const promptText = getSystemPrompt() + textLines;
+            
+            try {
+                log(`   Đang dịch lại nhóm ${c + 1}/${retryChunks.length} (${chunk.length} dòng)...`);
+                const result = await callTranslationApi(promptText);
+                
+                const translatedLines = result.split('\n');
+                for (const line of translatedLines) {
+                    const match = line.match(/^\[(\d+)\]\s*(.+)/);
+                    if (match) {
+                        const idx = parseInt(match[1]);
+                        const translated = match[2].trim();
+                        if (idx >= 0 && idx < parsedSubtitles.length && !containsChinese(translated) && translated.trim() !== '') {
+                            parsedSubtitles[idx].translatedText = translated;
+                        }
+                    }
+                }
+            } catch (error) {
+                log(`   Lỗi khi dịch lại nhóm ${c + 1}: ${error.message}`, true);
+            }
+            
+            // Delay nhỏ giữa các lần gọi
+            await new Promise(r => setTimeout(r, 500));
+        }
+    }
+    
+    // Sau MAX_VERIFY_ROUNDS vòng, kiểm tra lần cuối
+    const remaining = findBadSubtitles();
+    if (remaining.length > 0) {
+        log(`⚠️ [KẾT QUẢ] Vẫn còn ${remaining.length} dòng chưa dịch được sau ${MAX_VERIFY_ROUNDS} vòng kiểm tra. Các dòng này sẽ giữ nguyên text gốc.`, true);
+    } else {
+        log(`✅ [KIỂM TRA] Tất cả dòng đã được dịch chuẩn!`);
+    }
+    
+    finishTranslation(true);
 }
 
 function finishTranslation(isSuccess) {
