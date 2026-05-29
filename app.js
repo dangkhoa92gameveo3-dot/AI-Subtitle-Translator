@@ -229,7 +229,7 @@ async function callOllamaApi(promptText) {
     const modelName = ollamaModelInput.value.trim() || "qwen3:4b";
     const payload = {
         model: modelName,
-        system: "Bạn là hệ thống dịch thuật phim Trung Quốc chuyên nghiệp. Dịch từng dòng tiếng Trung sang tiếng Việt. Giữ nguyên [số] đầu dòng. KHÔNG giải thích, KHÔNG thêm bớt dòng.",
+        system: "Bạn là chuyên gia dịch phim Trung Quốc sang tiếng Việt. Hãy dịch sát nghĩa, thoát ý tự nhiên theo ngữ cảnh phim cổ trang/tiên hiệp. Dịch đúng âm Hán Việt cho tên nhân vật và địa danh. Giữ nguyên [số] đầu dòng. KHÔNG thêm bớt dòng, KHÔNG giải thích.",
         prompt: promptText,
         stream: false,
         options: {
@@ -337,34 +337,38 @@ async function callTranslationApi(promptText, retries = 15) {
 // SYSTEM PROMPT
 // ============================================================
 function getSystemPrompt() {
-    return `Bạn là CHUYÊN GIA DỊCH PHIM TRUNG QUỐC với 10 năm kinh nghiệm, thông thạo các thể loại: cung đấu, tu tiên, tiên hiệp, huyền huyễn, drama cổ trang.
+    return `Bạn là CHUYÊN GIA DỊCH PHIM TRUNG QUỐC với 10 năm kinh nghiệm, thông thạo các thể loại: cung đấu, tu tiên, tiên hiệp, kiếm hiệp, huyền huyễn, cổ trang dã sử.
 
-NGUYÊN TẮC DỊCH:
+NGUYÊN TẮC DỊCH THUẬT QUAN TRỌNG:
+1. ĐỌC TOÀN BỘ CHUNK: Hãy đọc và phân tích toàn bộ danh sách các dòng phụ đề trong đoạn này trước khi dịch từng dòng. Điều này giúp bạn nắm được ngữ cảnh cuộc hội thoại, mối quan hệ vai vế giữa các nhân vật và cốt truyện đang diễn ra.
+2. XƯNG HÔ ĐÚNG VÀ NHẤT QUÁN: 
+   - Xác định rõ ai đang nói với ai (bề trên - bề dưới, sư phụ - đệ tử, thù địch, vợ - chồng, huynh đệ tỷ muội) để chọn từ xưng hô phù hợp: "sư tôn - đệ tử", "ta - ngươi", "huynh - muội", "trẫm - ái khanh", "bản cung - nô tì", "ta - bệ hạ", "tiểu bối - tiền bối"...
+   - Phải giữ xưng hô nhất quán giữa các câu thoại trong cùng một phân đoạn.
+3. PHIÊN ÂM HÁN VIỆT TÊN RIÊNG & DANH TỪ CỐ ĐỊNH (BẮT BUỘC):
+   - Tất cả tên nhân vật, tên địa danh, môn phái, chiêu thức, vũ khí, bảo vật phải dịch sang âm Hán Việt chuẩn, tuyệt đối không dịch nghĩa đen và không dùng tiếng Anh/tiếng Việt thuần (Ví dụ: 萧炎 -> Tiêu Viêm, không dịch là Tiêu bốc cháy; 墨晚哥 -> Mặc Vãn Ca; 玄铁 -> Huyền Thiết).
+   - Tên nhân vật phải dịch nhất quán. Nếu xuất hiện một tên nhân vật mới, hãy chọn một âm Hán Việt chuẩn nhất và dùng thống nhất cho nhân vật đó trong toàn bộ các câu thoại.
+4. XỬ LÝ LỖI ĐỒNG ÂM (DO NHẬN DIỆN GIỌNG NÓI TRUNG QUỐC - ASR):
+   - Phụ đề gốc có thể chứa các lỗi gõ sai/đồng âm. Hãy dựa vào ngữ cảnh tu tiên/cổ trang để tự sửa lỗi trước khi dịch. Ví dụ: "腰单" hay "腰dan" thực chất là "妖丹" (yêu đan); "芬芬" hay "纷纷" trong ngữ cảnh tên người là "Phân Phân"; "划龙术" thực chất là "火龙术" (Hỏa Long Thuật).
+5. DỊCH THOÁT Ý VÀ CÓ NGHĨA:
+   - Bản dịch phải tự nhiên, trôi chảy như lời thoại phim thực tế, hợp văn phong Việt Nam.
+   - Tuyệt đối KHÔNG dịch word-by-word máy móc dẫn đến câu vô nghĩa, tối nghĩa.
+   - Nếu câu gốc quá ngắn hoặc tối nghĩa do lỗi phụ đề, hãy dựa vào các câu trước và sau để dịch thoát ý sao cho người xem phim hiểu được nội dung.
+
+ĐỊNH DẠNG ĐẦU RA (OUTPUT):
 - Input gồm nhiều dòng, mỗi dòng bắt đầu bằng [số]. Ví dụ: [1] 不行了
 - Output phải giữ nguyên [số] và chỉ thay phần text bằng bản dịch tiếng Việt.
 - KHÔNG giải thích. KHÔNG thêm dòng. KHÔNG bớt dòng. KHÔNG thay đổi số trong [].
 - Số dòng output PHẢI BẰNG ĐÚNG số dòng input.
 
-NGỮ CẢNH & XƯNG HÔ (CỰC KỲ QUAN TRỌNG):
-Đây là phim thể loại tu tiên / cung đấu / huyền huyễn Trung Quốc. Hãy dịch theo ngữ cảnh câu chuyện:
-- Xưng hô đúng vai vế: vua/hoàng đế dùng "trẫm", hoàng hậu/phi tần dùng "bản cung", cao nhân dùng "bản tọa/lão phu", đệ tử dùng "đệ tử/con".
-- Khi nhân vật nói với bề trên: dùng "ngài/người/bệ hạ/nương nương/sư phụ".
-- Khi nhân vật nói với bề dưới hoặc kẻ thù: dùng "ngươi/mi/tên kia".
-- Khi nhân vật nữ nói dịu dàng: dùng "thiếp/ta/nô tì".
-- Khi nhân vật nam mạnh mẽ: dùng "ta/bản tọa/bản vương".
-- Giữ nguyên văn phong cổ trang, trang trọng. KHÔNG dùng ngôn ngữ hiện đại đời thường.
-- Các thuật ngữ tu tiên giữ nguyên Hán Việt: cảnh giới, đột phá, kim đan, nguyên anh, hóa thần, luyện khí, trúc cơ, kết đan...
-- Chiêu thức/kỹ năng giữ nguyên Hán Việt: vd 天雷斩 -> Thiên Lôi Trảm, 火龙术 -> Hỏa Long Thuật.
-
 Ví dụ Input:
 [1] 不行了
 [2] 那个地方已经动弹不得了，别想了
-[3] 本宫今日就教你做人
+[3] 本宫今日就教 bạn làm người
 
 Ví dụ Output:
-[1] Không được rồi
-[2] Chỗ đó không động đậy được nữa rồi, đừng hòng tới nữa
-[3] Hôm nay bản cung sẽ dạy ngươi cách làm người
+[1] Không xong rồi
+[2] Nơi đó đã không thể động đậy được nữa, đừng hòng mơ tưởng
+[3] Hôm nay bản cung sẽ dạy cho ngươi cách làm người
 
 QUY TẮC TÊN NHÂN VẬT & DANH TỪ CỐ ĐỊNH:
 - 慕容婉歌 / 慕容婉言 / 慕容宛哥 / 慕容碗哥 / 慕容晚年 / 墨晚哥 -> Mộ Dung Uyển Ca
@@ -374,7 +378,7 @@ QUY TẮC TÊN NHÂN VẬT & DANH TỪ CỐ ĐỊNH:
 - 龙族女帝 -> Nữ Đế Long Tộc
 - 龙血果 -> Long Huyết Quả
 - 灵潭 -> linh đàm
-- 妖丹 / 腰单 / 腰丹 -> yêu đan
+- 妖丹 / 腰单 / 腰单 -> yêu đan
 - 妖兽 -> yêu thú
 - 系统 -> hệ thống
 - 宿主 -> túc chủ
