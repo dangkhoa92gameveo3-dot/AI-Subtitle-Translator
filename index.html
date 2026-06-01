@@ -74,6 +74,39 @@
             </div>
             <div class="log-console" id="logConsole"></div>
         </section>
+
+        <section class="review-section hidden" id="reviewSection">
+            <div class="review-header">
+                <h2>🔍 Kết Quả Rà Soát Phụ Đề</h2>
+                <p>Hệ thống AI đã phát hiện các nhân vật chính và đề xuất sửa đổi các lỗi dịch thuật.</p>
+            </div>
+            
+            <div class="review-box characters-box">
+                <h3>👥 Nhân vật chính phát hiện được:</h3>
+                <div class="characters-list" id="charactersList">
+                    <!-- Sẽ được điền động bằng JS -->
+                </div>
+            </div>
+
+            <div class="review-box audit-box">
+                <h3>⚠️ Đề xuất sửa đổi câu từ & xưng hô:</h3>
+                <div class="audit-loading" id="auditLoading">
+                    <div class="spinner"></div>
+                    <span>Đang phân tích và tìm kiếm lỗi dịch thuật...</span>
+                </div>
+                <div class="audit-list hidden" id="auditList">
+                    <!-- Danh sách checkbox sửa lỗi sẽ được điền động -->
+                </div>
+            </div>
+
+            <div class="review-actions">
+                <button class="primary-btn" id="autoFixBtn">
+                    <span class="btn-text">🔧 Tự Động Khắc Phục Lỗi</span>
+                    <div class="spinner hidden" id="fixSpinner"></div>
+                </button>
+                <button class="ghost-btn" id="skipFixBtn">Bỏ qua & Tải file hiện tại</button>
+            </div>
+        </section>
         
         <section class="download-section hidden" id="downloadSection">
             <a id="downloadLink" class="success-btn" href="#" download>

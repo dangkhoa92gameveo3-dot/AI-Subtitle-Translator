@@ -18,12 +18,19 @@ const keyInputsContainer = document.getElementById('keyInputsContainer');
 const addKeyBtn = document.getElementById('addKeyBtn');
 const useOllamaBtn = document.getElementById('useOllamaBtn');
 const ollamaModelInput = document.getElementById('ollamaModelInput');
+const reviewSection = document.getElementById('reviewSection');
+const charactersList = document.getElementById('charactersList');
+const auditLoading = document.getElementById('auditLoading');
+const auditList = document.getElementById('auditList');
+const autoFixBtn = document.getElementById('autoFixBtn');
+const skipFixBtn = document.getElementById('skipFixBtn');
 
 // Variables
 let currentFile = null;
 let parsedSubtitles = [];
 let isTranslating = false;
 let currentKeyIndex = 0;
+let auditSuggestions = [];
 const CHUNK_SIZE = 50;
 
 // --- DYNAMIC API KEY & STORAGE MANAGEMENT ---
@@ -599,7 +606,7 @@ async function verifyAndRetranslate() {
     } else {
         log(`✅ Tất cả dòng đã được dịch chuẩn!`);
     }
-    finishTranslation(true);
+    startAuditPhase();
 }
 
 // ============================================================
@@ -647,6 +654,7 @@ function resetApp() {
     controlsSection.classList.add('hidden');
     progressSection.classList.add('hidden');
     downloadSection.classList.add('hidden');
+    reviewSection.classList.add('hidden');
     const titlesSection = document.getElementById('titlesSection');
     const titlesList = document.getElementById('titlesList');
     titlesSection.classList.add('hidden');
@@ -757,4 +765,217 @@ copySelectedBtn.addEventListener('click', () => {
         copySelectedBtn.classList.add('copied');
         setTimeout(() => { copySelectedBtn.textContent = '📋 Copy các tiêu đề đã chọn'; copySelectedBtn.classList.remove('copied'); }, 2000);
     });
+});
+
+// ============================================================
+// PHA RÀ SOÁT & KHẮC PHỤC LỖI DỊCH THUẬT (AUDIT & AUTO-FIX)
+// ============================================================
+async function startAuditPhase() {
+    log("🔍 Bắt đầu pha rà soát chất lượng bản dịch...");
+    progressSection.classList.add('hidden');
+    reviewSection.classList.remove('hidden');
+    auditLoading.classList.remove('hidden');
+    auditList.classList.add('hidden');
+    charactersList.innerHTML = '';
+    auditList.innerHTML = '';
+    auditSuggestions = [];
+
+    // Chọn ra mẫu phụ đề dịch để gửi AI rà soát
+    const sampleSize = 50;
+    const samples = [];
+    const total = parsedSubtitles.length;
+
+    // Lấy 50 dòng đầu
+    for (let i = 0; i < Math.min(sampleSize, total); i++) {
+        samples.push(i);
+    }
+    // Lấy 50 dòng giữa
+    if (total > sampleSize * 2) {
+        const startMid = Math.floor(total / 2) - Math.floor(sampleSize / 2);
+        for (let i = startMid; i < startMid + sampleSize; i++) {
+            if (!samples.includes(i)) samples.push(i);
+        }
+    }
+    // Lấy 50 dòng cuối
+    if (total > sampleSize) {
+        const startEnd = Math.max(total - sampleSize, 0);
+        for (let i = startEnd; i < total; i++) {
+            if (!samples.includes(i)) samples.push(i);
+        }
+    }
+    samples.sort((a, b) => a - b);
+
+    let auditText = '';
+    for (const idx of samples) {
+        auditText += `[${idx}] ${parsedSubtitles[idx].text} ||| ${parsedSubtitles[idx].translatedText}\n`;
+    }
+
+    const auditPrompt = `Bạn là chuyên gia biên tập phụ đề phim cổ trang Trung Quốc, cung đấu, huyền huyễn, tu tiên tại thị trường Việt Nam.
+
+Nhiệm vụ của bạn:
+1. Nhận diện các nhân vật chính xuất hiện trong phân đoạn phụ đề dưới đây và xác định vai trò của họ.
+2. Rà soát chất lượng dịch, tìm các lỗi nghiêm trọng sau:
+   - Tên nhân vật dịch thiếu nhất quán (Ví dụ: Tiêu Viêm bị dịch thành Tiêu Diêm hoặc Tiêu Viem ở các dòng khác nhau).
+   - Xưng hô sai vai vế cổ trang/tu tiên (Ví dụ: đệ tử gọi sư tôn là "anh/tôi", phi tần gọi cung nữ là "chị").
+   - Câu từ ngô nghê, chưa chuẩn tiếng Việt hoặc dịch thô từ lỗi nhận diện giọng nói (ASR) của tiếng Trung.
+3. Đề xuất bản dịch mới chuẩn xác, mượt mà hơn.
+
+ĐỊNH DẠNG ĐẦU RA BẮT BUỘC (TUYỆT ĐỐI TUÂN THỦ, KHÔNG THÊM BẤT KỲ GIẢI THÍCH NÀO KHÁC):
+CHARACTERS:
+- Tên nhân vật 1 ||| Vai trò
+- Tên nhân vật 2 ||| Vai trò
+
+SUGGESTIONS:
+[mã_dòng] ||| Câu gốc ||| Bản dịch lỗi ||| Đề xuất sửa ||| Lý do sửa
+
+Lưu ý: Chỉ đưa ra tối đa 15 dòng đề xuất sửa đổi đáng giá nhất. Nếu bản dịch đã rất tốt rồi, phần SUGGESTIONS có thể để trống.
+
+DƯỚI ĐÂY LÀ PHẦN PHỤ ĐỀ CẦN RÀ SOÁT:
+${auditText}`;
+
+    try {
+        const result = await callTranslationApi(auditPrompt);
+        parseAuditResult(result);
+    } catch (error) {
+        log("Lỗi khi rà soát phụ đề: " + error.message, true);
+        auditLoading.innerHTML = `<div style="color:#fca5a5;text-align:center;padding:16px;">Không thể thực hiện rà soát tự động: ${error.message}</div>`;
+    }
+}
+
+function parseAuditResult(rawText) {
+    auditLoading.classList.add('hidden');
+    auditList.classList.remove('hidden');
+    
+    const lines = rawText.split('\n');
+    let section = '';
+    
+    charactersList.innerHTML = '';
+    auditList.innerHTML = '';
+    auditSuggestions = [];
+
+    let hasSuggestions = false;
+
+    for (let line of lines) {
+        line = line.trim();
+        if (!line) continue;
+        
+        if (line.startsWith('CHARACTERS:')) {
+            section = 'characters';
+            continue;
+        } else if (line.startsWith('SUGGESTIONS:')) {
+            section = 'suggestions';
+            continue;
+        }
+
+        if (section === 'characters') {
+            if (line.startsWith('-')) {
+                const parts = line.substring(1).split('|||');
+                const name = parts[0].trim();
+                const role = parts[1] ? parts[1].trim() : '';
+                if (name) {
+                    const badge = document.createElement('div');
+                    badge.className = 'character-badge';
+                    badge.textContent = role ? `${name} (${role})` : name;
+                    charactersList.appendChild(badge);
+                }
+            }
+        } else if (section === 'suggestions') {
+            const parts = line.split('|||');
+            if (parts.length >= 4) {
+                const matchLineNum = parts[0].match(/\[(\d+)\]/);
+                if (matchLineNum) {
+                    const idx = parseInt(matchLineNum[1]);
+                    const origText = parts[1].trim();
+                    const oldText = parts[2].trim();
+                    const newText = parts[3].trim();
+                    const reason = parts[4] ? parts[4].trim() : 'Cải thiện câu từ và xưng hô';
+
+                    auditSuggestions.push({ idx, origText, oldText, newText, reason });
+                    hasSuggestions = true;
+
+                    // Tạo DOM item
+                    const item = document.createElement('div');
+                    item.className = 'audit-item selected';
+                    item.innerHTML = `
+                        <input type="checkbox" class="audit-checkbox" checked data-idx="${idx}">
+                        <div class="audit-item-content">
+                            <span class="audit-item-line">Dòng ${idx + 1}</span>
+                            <span class="audit-text-orig">Gốc: "${origText}"</span>
+                            <div class="audit-comparison">
+                                <span class="audit-old">${oldText}</span>
+                                <span class="audit-new">${newText}</span>
+                            </div>
+                            <span class="audit-reason">💡 ${reason}</span>
+                        </div>
+                    `;
+                    
+                    item.addEventListener('click', (e) => {
+                        if (e.target.type === 'checkbox') return;
+                        const cb = item.querySelector('.audit-checkbox');
+                        cb.checked = !cb.checked;
+                        item.classList.toggle('selected', cb.checked);
+                    });
+                    
+                    item.querySelector('.audit-checkbox').addEventListener('change', (e) => {
+                        item.classList.toggle('selected', e.target.checked);
+                    });
+
+                    auditList.appendChild(item);
+                }
+            }
+        }
+    }
+
+    if (charactersList.children.length === 0) {
+        charactersList.innerHTML = `<span style="color: var(--text-secondary); font-style: italic;">Không phát hiện thấy nhân vật chính nổi bật.</span>`;
+    }
+
+    if (!hasSuggestions) {
+        auditList.innerHTML = `
+            <div style="text-align: center; color: #34d399; padding: 20px; font-weight: 600;">
+                🎉 AI Rà Soát không phát hiện lỗi nghiêm trọng nào! Bản dịch đã rất chuẩn xác.
+            </div>`;
+    }
+}
+
+async function autoFix() {
+    const autoFixBtnText = autoFixBtn.querySelector('.btn-text');
+    const fixSpinner = document.getElementById('fixSpinner');
+    
+    autoFixBtn.disabled = true;
+    autoFixBtnText.textContent = "Đang sửa...";
+    fixSpinner.classList.remove('hidden');
+
+    const checkedBoxes = auditList.querySelectorAll('.audit-checkbox:checked');
+    if (checkedBoxes.length === 0) {
+        log("Không có đề xuất sửa lỗi nào được chọn.");
+    } else {
+        let count = 0;
+        checkedBoxes.forEach(cb => {
+            const idx = parseInt(cb.dataset.idx);
+            const suggestion = auditSuggestions.find(s => s.idx === idx);
+            if (suggestion) {
+                parsedSubtitles[idx].translatedText = suggestion.newText;
+                count++;
+            }
+        });
+        log(`🔧 Đã tự động khắc phục thành công ${count} lỗi dịch thuật!`);
+    }
+
+    // Chuyển sang màn hình download
+    setTimeout(() => {
+        autoFixBtn.disabled = false;
+        autoFixBtnText.textContent = "🔧 Tự Động Khắc Phục Lỗi";
+        fixSpinner.classList.add('hidden');
+        reviewSection.classList.add('hidden');
+        finishTranslation(true);
+    }, 1000);
+}
+
+// Event Listeners cho nút rà soát
+autoFixBtn.addEventListener('click', autoFix);
+skipFixBtn.addEventListener('click', () => {
+    log("⏩ Bỏ qua bước khắc phục lỗi.");
+    reviewSection.classList.add('hidden');
+    finishTranslation(true);
 });
